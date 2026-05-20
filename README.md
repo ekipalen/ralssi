@@ -1,0 +1,131 @@
+# Rälssi — Finnish Public Funding Explorer
+
+A single-file CLI tool that brings together six Finnish public funding databases
+into one searchable view. 148K grant rows totaling 41 billion euros — from STEA
+grants to EU structural funds to state grants and development cooperation — all
+cross-referenced by organization.
+
+Public funding data is scattered across separate systems with different formats,
+making it hard to see the full picture. Rälssi combines these sources and can
+surface patterns like organizations receiving funding from multiple channels,
+helping make public spending more transparent and easier to explore.
+
+Note: only publicly available data sources are included. A significant share of
+Finnish public funding is distributed by agencies and municipalities that do not
+publish their grant data openly, so this is far from a complete picture.
+
+Designed to be used with **Claude Code** or **Codex** as the primary interface —
+ask questions in natural language, the AI runs the commands.
+
+## Setup
+
+**1. Install uv** (installs Python automatically):
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+Windows: `powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"`
+
+**2. Clone and download data:**
+
+```bash
+git clone https://github.com/ekipalen/ralssi.git
+cd ralssi
+uv run ralssi.py setup
+```
+
+The `setup` command downloads the database and data files (~150 MB) from the GitHub release.
+Data files are not included in the repo due to size (~330 MB uncompressed).
+
+**3. Verify:**
+
+```bash
+uv run ralssi.py sources
+```
+
+**Optional:**
+
+```bash
+sudo apt install sqlite3       # Direct DB queries (Debian/Ubuntu)
+brew install sqlite3            # macOS
+```
+
+numpy (vector similarity search) is installed automatically by `uv run` via PEP 723 metadata.
+
+## What's in the repo
+
+| File | Purpose |
+|------|---------|
+| `ralssi.py` | Single-file CLI, zero mandatory deps (Python 3.9+ stdlib) |
+| `AGENTS.md` | AI interface guide (auto-loaded by Claude Code and Codex) |
+| `SOURCES.md` | Data provenance and verification documentation |
+| `data/` | Downloaded via `setup` — SQLite DB, embeddings, raw source files |
+
+## Data sources
+
+| Source | Rows | Total | Description |
+|--------|------|-------|-------------|
+| STEA | 26,487 | 3.2B | Järjestöavustukset (incl. rejected applications) |
+| EURA | 19,878 | 4.3B | EU structural funds 2014–2027 |
+| BF | 58,594 | 11.5B | Business Finland research and innovation funding |
+| UM/IATI | 23,301 | 18.3B | Development cooperation |
+| Helsinki | 11,037 | 366M | Municipal grants |
+| VA | 8,537 | 3.7B | Valtionavustukset — OKM, Akatemia, TEM, STM, THL, UM, VNK, OM, YM, OPH |
+
+## Quick start
+
+```bash
+uv run ralssi.py sources                # Overview of all data sources
+uv run ralssi.py org "Punainen Risti"   # Cross-source org search
+uv run ralssi.py top stea              # Biggest STEA recipients
+uv run ralssi.py hunters               # Orgs receiving from multiple sources
+uv run ralssi.py hunters -v            # With per-source breakdowns
+uv run ralssi.py verify "SPR"          # Verify against raw source files
+uv run ralssi.py sql "SELECT source_name, source, org_id FROM org_mapping WHERE source_name LIKE '%Punainen Risti%'"
+```
+
+All commands except `verify` support `--json` for machine-readable output.
+
+## Commands
+
+| Command | Description |
+|---------|-------------|
+| `org <name>` | Cross-source org search (`--merge`, `--detail`, `--source`) |
+| `profile <name>` | Year x source funding matrix (`--merge` to combine groups) |
+| `search <term>` | Fulltext search across all sources (`--source`, `--since/--until`) |
+| `hunters` | Find orgs in multiple sources (`--sources`, `--since/--until`, `-v` for details) |
+| `top [source]` | Biggest recipients (`--since/--until`, `--year`) |
+| `verify <name>` | Verify org data against raw sources |
+| `sources` | Overview of all data sources + aggregate statistics |
+| `clusters [id]` | List or inspect STEA grant clusters (`--id` alternative) |
+| `vsearch <id>` | Find similar grants by vector similarity (`--text`, `--source`, cross-source default) |
+| `sql <query>` | Run arbitrary SELECT queries against the database |
+| `setup` | Download data files from GitHub release (`--force` to re-download) |
+
+## With Claude Code / Codex
+
+Open the project directory and ask questions directly:
+
+```
+"Paljonko Suomen Punainen Risti on saanut yhteensä kaikista lähteistä?"
+"Mitkä organisaatiot saavat rahoitusta useasta eri lähteestä?"
+"Näytä suurimmat EU-rakennerahastojen saajat vuodesta 2020"
+"Etsi ilmastonmuutokseen liittyvät hankkeet"
+```
+
+The AI reads `AGENTS.md` automatically and knows how to use the CLI, run SQL
+queries, and cross-reference data across sources.
+
+## Database schema
+
+The database contains source-specific tables (`grants`, `eura_all`, `bf_awarded`,
+`um_grants`, `helsinki_grants`, `va_grants`) plus an `org_mapping` table that links
+the same organization across sources via `org_id`. The `org_families` and
+`org_families_cache` tables provide keyword-based org groupings (e.g. "youth",
+"disability") for thematic analysis across sources. Use `sql "SELECT name, sql FROM sqlite_master WHERE type='table'"` or inspect
+`SOURCES.md` for full details.
+
+## License
+
+Data is from public Finnish government sources. See `SOURCES.md` for provenance.

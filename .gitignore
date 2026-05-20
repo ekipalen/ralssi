@@ -1,0 +1,9 @@
+__pycache__/
+data/funding.db
+data/*.npy
+data/*embedding*.json
+data/iati/
+data/*.xlsx
+data/*.xlsm
+data/helsinki/
+data/okm/
