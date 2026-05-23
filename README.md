@@ -14,7 +14,7 @@ Note: only publicly available data sources are included. A significant share of
 Finnish public funding is distributed by agencies and municipalities that do not
 publish their grant data openly, so this is far from a complete picture.
 
-Designed to be used with **Claude Code** or **Codex** as the primary interface —
+Designed to be used with **Claude Code**, **Codex**, or **OpenClaw** as the primary interface —
 ask questions in natural language, the AI runs the commands.
 
 ## Setup
@@ -67,7 +67,7 @@ numpy (vector similarity search) is installed automatically by `uv run` via PEP 
 | Source | Rows | Total | Description |
 |--------|------|-------|-------------|
 | STEA | 26,487 | 3.2B | Järjestöavustukset (incl. rejected applications) |
-| EURA | 19,878 | 4.3B | EU structural funds 2014–2027 |
+| EURA | 19,878 | 4.3B | EU structural funds 2014–2029 |
 | BF | 58,594 | 11.5B | Business Finland research and innovation funding |
 | UM/IATI | 23,301 | 18.3B | Development cooperation |
 | Helsinki | 11,037 | 366M | Municipal grants |
