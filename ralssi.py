@@ -37,6 +37,7 @@ SOURCES = {
     "um":       {"table": "um_grants",      "name": "organisation","amount": "amount",             "year": "year",  "desc": "UM/IATI dev cooperation"},
     "helsinki":	{"table": "helsinki_grants", "name": "hakija",      "amount": "myonnetty",          "year": "vuosi", "desc": "Helsinki municipal"},
     "va":       {"table": "va_grants",      "name": "organisation","amount": "granted_eur",        "year": "year",  "desc": "Valtionavustukset (haeavustuksia.fi)"},
+    "fts":      {"table": "fts_grants",     "name": "organisation","amount": "amount",             "year": "year",  "desc": "EU FTS (Financial Transparency System)"},
 }
 
 
@@ -345,7 +346,7 @@ def _summarize_org_group(conn, source_names, json_mode, detail=False, detail_sou
     """Summarize one org group across sources. Returns (output_list, combined_total)."""
     combined_total = 0
     output = []
-    for src in ["stea", "eura", "bf", "um", "helsinki", "va"]:
+    for src in ["stea", "eura", "bf", "um", "helsinki", "va", "fts"]:
         if src not in source_names:
             continue
         rows = query_source(conn, src, source_names[src])
@@ -486,7 +487,7 @@ def cmd_hunters(args, conn):
         min_sources = args.min
     orgs = {}
 
-    ytunnus_sources = {"stea", "eura", "bf", "va"}
+    ytunnus_sources = {"stea", "eura", "bf", "va", "fts"}
     if source_filter:
         ytunnus_sources = ytunnus_sources & source_filter
     for src in ytunnus_sources:
@@ -756,7 +757,7 @@ def cmd_verify(args, conn):
         print("  Not found in org_mapping. Trying direct search...\n")
 
     found_any = False
-    for src in ["stea", "eura", "bf", "um", "helsinki", "va"]:
+    for src in ["stea", "eura", "bf", "um", "helsinki", "va", "fts"]:
         names = source_names.get(src, set())
         if not names:
             s = SOURCES[src]
@@ -1178,7 +1179,7 @@ def cmd_vsearch(args, conn):
 
     # Embedding coverage info
     coverage_parts = []
-    all_sources_ordered = ["stea", "eura", "um", "bf", "helsinki", "va"]
+    all_sources_ordered = ["stea", "eura", "um", "bf", "helsinki", "va", "fts"]
     for src in all_sources_ordered:
         if src not in emb_files:
             tbl = SOURCES[src]["table"]
@@ -1208,6 +1209,7 @@ SEARCH_FIELDS = {
     "um":       {"table": "um_grants",      "text": ["title", "description"],           "name": "organisation","amount": "amount",             "year": "year", "id": "activity_id"},
     "helsinki":	{"table": "helsinki_grants", "text": ["hakemustyyppi", "avustuslaji"],   "name": "hakija",      "amount": "myonnetty",          "year": "vuosi", "id": "id"},
     "va":       {"table": "va_grants",      "text": ["purpose", "call_name"],            "name": "organisation","amount": "granted_eur",        "year": "year",  "id": "id"},
+    "fts":      {"table": "fts_grants",     "text": ["programme"],                       "name": "organisation","amount": "amount",             "year": "year",  "id": "id"},
 }
 
 
@@ -1225,8 +1227,9 @@ def cmd_search(args, conn):
     for src, sf in SEARCH_FIELDS.items():
         if source_filter and src != source_filter:
             continue
-        conditions = " OR ".join(f"{col} LIKE ? ESCAPE '\\'" for col in sf["text"])
-        params = [f"%{_escape_like(term)}%" for _ in sf["text"]]
+        search_cols = sf["text"] + [sf["name"]]
+        conditions = " OR ".join(f"{col} LIKE ? ESCAPE '\\'" for col in search_cols)
+        params = [f"%{_escape_like(term)}%" for _ in search_cols]
         yr_clause, yr_params = _search_year_where(src, since, until)
         where = f"({conditions})"
         if yr_clause:
@@ -1402,7 +1405,7 @@ def cmd_profile(args, conn):
     for gi, g in enumerate(org_groups):
         matrix = {}
         active_sources = []
-        for src in ["stea", "eura", "bf", "um", "helsinki", "va"]:
+        for src in ["stea", "eura", "bf", "um", "helsinki", "va", "fts"]:
             if src not in g["sources"]:
                 continue
             rows = query_source(conn, src, g["sources"][src])
@@ -1598,7 +1601,7 @@ def main():
     p.add_argument("item_id", nargs="?", help="Grant ID (numeric=STEA, S/A/J-prefix=EURA, else=UM)")
     p.add_argument("--text", help="Find seed grant by keywords (multi-word: all words must match)")
     p.add_argument("--limit", type=int, default=10, help="Number of results (default: 10)")
-    p.add_argument("--source", choices=["stea", "eura", "um", "va"], help="Search only this source")
+    p.add_argument("--source", choices=["stea", "eura", "um", "va", "fts"], help="Search only this source")
     p.add_argument("--no-dedup", action="store_true", help="Disable org deduplication (default: keep best per org per source)")
 
     p = _json(sub.add_parser("search", help="Fulltext search across all sources"))
