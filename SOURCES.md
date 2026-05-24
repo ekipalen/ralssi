@@ -67,6 +67,15 @@
 - **Sarakkeet:** id, organisation, y_tunnus, grantor, decision_date, year, applied_eur, granted_eur, eu_funds_eur, purpose, call_name, regions
 - **Huom:** Hylätyt päätökset (`data/okm/Kielteiset päätökset.xlsx`, 55 432 riviä) säilytetty referenssiksi mutta eivät tietokannassa.
 
+## FTS (EU Financial Transparency System)
+
+- **Raakadata:** `data/fts/` (API/CSV-export)
+- **Tietokantataulu:** `fts_grants` (4 652 riviä)
+- **Lähde:** https://ec.europa.eu/budget/fts — EU:n suorat maksut suomalaisille organisaatioille
+- **Verifiointi:** Hae suoraan FTS-verkkosivulta organisaation nimellä tai VAT-numerolla
+- **Sarakkeet:** id, year, programme, organisation, vat_number, y_tunnus, amount, is_ngo, is_nfpo, responsible_department, expense_type, beneficiary_type
+- **Huom:** Sisältää vain Suomeen kohdistuvat maksut. Y-tunnus johdettu VAT-numerosta (FI-prefiksi poistettu).
+
 ## org_mapping (ristiin-linkitys)
 
 - **Tietokantataulu:** `org_mapping` (~53 000 riviä)

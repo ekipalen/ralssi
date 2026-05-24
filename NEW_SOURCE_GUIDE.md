@@ -23,7 +23,7 @@ Ennen mitään koodausta: tutki data huolella.
 
 - Montako riviä, mitä sarakkeita, miltä vuosilta
 - Onko Y-tunnuksia (helpottaa org-linkitystä huomattavasti)
-- Onko duplikaatteja olemassolevan datan kanssa (STEA, BF, EURA, UM, Helsinki, VA)
+- Onko duplikaatteja olemassolevan datan kanssa (STEA, BF, EURA, UM, Helsinki, VA, FTS)
   - Testaa pienellä otoksella: sama org + sama summa + sama vuosi = duplikaatti
 - Mitkä rivit ovat relevantteja (suodata turhat myöntäjät, tyhjät saajat jne.)
 - Säilytä alkuperäistiedostot `data/<nimi>/` -hakemistossa verifointia varten

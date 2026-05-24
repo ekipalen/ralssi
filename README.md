@@ -1,7 +1,7 @@
 # Rälssi — Finnish Public Funding Explorer
 
-A single-file CLI tool that brings together six Finnish public funding databases
-into one searchable view. 148K grant rows totaling 41 billion euros — from STEA
+A single-file CLI tool that brings together seven Finnish public funding databases
+into one searchable view. 152K grant rows totaling 43 billion euros — from STEA
 grants to EU structural funds to state grants and development cooperation — all
 cross-referenced by organization.
 
@@ -72,6 +72,7 @@ numpy (vector similarity search) is installed automatically by `uv run` via PEP 
 | UM/IATI | 23,301 | 18.3B | Development cooperation |
 | Helsinki | 11,037 | 366M | Municipal grants |
 | VA | 8,537 | 3.7B | Valtionavustukset — OKM, Akatemia, TEM, STM, THL, UM, VNK, OM, YM, OPH |
+| FTS | 4,652 | 1.5B | EU Financial Transparency System — direct EU payments to Finnish organisations |
 
 ## Quick start
 
@@ -134,7 +135,7 @@ queries, and cross-reference data across sources.
 ## Database schema
 
 The database contains source-specific tables (`grants`, `eura_all`, `bf_awarded`,
-`um_grants`, `helsinki_grants`, `va_grants`) plus an `org_mapping` table that links
+`um_grants`, `helsinki_grants`, `va_grants`, `fts_grants`) plus an `org_mapping` table that links
 the same organization across sources via `org_id`. The `org_families` and
 `org_families_cache` tables provide keyword-based org groupings (e.g. "youth",
 "disability") for thematic analysis across sources. Use `sql "SELECT name, sql FROM sqlite_master WHERE type='table'"` or inspect

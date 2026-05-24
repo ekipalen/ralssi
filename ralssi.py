@@ -293,6 +293,11 @@ def _detail_grants(source, rows, limit):
                 "grantor": r["grantor"] if "grantor" in r.keys() else None,
                 "purpose": r["purpose"] if "purpose" in r.keys() else None,
             })
+        elif source == "fts":
+            details.append({
+                "year": r["year"], "amount": r["amount"],
+                "programme": r["programme"] if "programme" in r.keys() else None,
+            })
     # Sort by amount descending
     details.sort(key=lambda d: -(d.get("amount") or 0))
     return details[:limit]
@@ -338,6 +343,12 @@ def _print_detail_table(source, details):
             [str(d["year"] or "-"), fmt_money(d["amount"]),
              textwrap.shorten(d["grantor"] or "-", 20, placeholder="..."),
              textwrap.shorten(d["purpose"] or "-", 45, placeholder="...")]
+            for d in details
+        ])
+    elif source == "fts":
+        print_table(["Year", "Amount", "Programme"], [
+            [str(d["year"] or "-"), fmt_money(d["amount"]),
+             textwrap.shorten(d["programme"] or "-", 60, placeholder="...")]
             for d in details
         ])
 
@@ -947,6 +958,7 @@ def cmd_vsearch(args, conn):
         "eura": ("eura_embeddings.npy", "eura_embedding_ids.json"),
         "um":   ("um_embeddings.npy", "um_embedding_ids.json"),
         "va":   ("va_embeddings.npy", "va_embedding_ids.json"),
+        "fts":  ("fts_embeddings.npy", "fts_embedding_ids.json"),
     }
 
     # Resolve item_id: either directly or via --text search
@@ -1012,7 +1024,7 @@ def cmd_vsearch(args, conn):
         ids = json.load(f)
 
     # Find the query item index
-    lookup_id = int(item_id) if query_source_key in ("stea", "va") else item_id
+    lookup_id = int(item_id) if query_source_key in ("stea", "va", "fts") else item_id
     try:
         idx = ids.index(lookup_id)
     except ValueError:
@@ -1088,6 +1100,11 @@ def cmd_vsearch(args, conn):
                 "grantor || ': ' || COALESCE(purpose, '') as desc FROM va_grants WHERE id = ?",
                 [sid],
             ).fetchone()
+        elif src == "fts":
+            row = conn.execute(
+                "SELECT organisation as org, year, amount, programme as desc FROM fts_grants WHERE id = ?",
+                [sid],
+            ).fetchone()
         else:
             row = None
 
@@ -1145,6 +1162,9 @@ def cmd_vsearch(args, conn):
     elif query_source_key == "va":
         qrow = conn.execute("SELECT organisation, purpose FROM va_grants WHERE id = ?", [lookup_id]).fetchone()
         q_desc = f"{qrow['organisation']}: {qrow['purpose']}" if qrow else item_id
+    elif query_source_key == "fts":
+        qrow = conn.execute("SELECT organisation, programme FROM fts_grants WHERE id = ?", [lookup_id]).fetchone()
+        q_desc = f"{qrow['organisation']}: {qrow['programme']}" if qrow else item_id
     else:
         qrow = conn.execute("SELECT title, organisation FROM um_grants WHERE activity_id = ?", [item_id]).fetchone()
         q_desc = f"{qrow['organisation']}: {qrow['title']}" if qrow else item_id
@@ -1583,7 +1603,7 @@ def main():
     _add_year_args(p)
 
     p = _json(sub.add_parser("top", help="Biggest recipients"))
-    p.add_argument("source", nargs="?", help="Source (stea/eura/bf/um/helsinki)")
+    p.add_argument("source", nargs="?", help="Source (stea/eura/bf/um/helsinki/va/fts)")
     p.add_argument("-n", type=int, default=20, help="Number of results (default: 20)")
     _add_year_args(p)
 

@@ -1,6 +1,6 @@
 # Rälssi — julkisen rahoituksen tutkimustyökalu
 
-Tietokanta suomalaisesta julkisesta rahoituksesta. 7 datalähdettä, ~148 000 riviä, yhteensä ~41 mrd €. Tarkoitettu tutkivaan analyysiin: ketkä saavat rahaa, mistä lähteistä, ja kuinka paljon?
+Tietokanta suomalaisesta julkisesta rahoituksesta. 7 datalähdettä, ~152 000 riviä, yhteensä ~43 mrd €. Tarkoitettu tutkivaan analyysiin: ketkä saavat rahaa, mistä lähteistä, ja kuinka paljon?
 
 > **Suositus agenteille:** Käytä oletuksena `--third-sector`-lippua (oletus: päällä). Kolmanteen sektoriin rajattuna data on usein kiinnostavampaa ja datamäärä hallittavampaa. Poista suodatus `--no-third-sector`-lipulla vain kun käyttäjä nimenomaisesti pyytää yliopisto-, yritys- tai viranomaisdata.
 
@@ -167,6 +167,7 @@ uv run ralssi.py vsearch --text "climate" --source stea # Tekstihaku → seed �
 | UM | 23 301 | 23 301 | 100% | |
 | EURA | 19 878 | 19 878 | 100% | Vanhemmat hankkeet indeksoitu nimellä (ei tiivistelmää) |
 | VA | 8 537 | 8 537 | 100% | Valtionavustukset |
+| FTS | 1 850 | 4 652 | 39.8% | EU Financial Transparency System |
 | BF | 0 | 58 594 | 0% | Yritys/innovaatiorahoitus, ei sovellu semanttiseen hakuun |
 | Helsinki | 0 | 11 037 | 0% | |
 
@@ -258,9 +259,14 @@ sqlite3 -json data/funding.db "SELECT * FROM org_mapping LIMIT 5"
 - grantor: OKM, Suomen Akatemia, TEM, STM, THL, Ulkoministeriö, VNK, OM, YM, OPH (vain yhdistykset/säätiöt)
 - Lähde: haeavustuksia.fi Power BI -export, raakatiedostot `data/okm/`
 
+### fts_grants (EU Financial Transparency System)
+`id, year, programme, organisation, vat_number, y_tunnus, amount, is_ngo, is_nfpo, responsible_department, expense_type, beneficiary_type`
+- Lähde: ec.europa.eu/budget/fts — suorat EU-maksut suomalaisille organisaatioille
+- 4 652 riviä, ~1,5 mrd €
+
 ### org_mapping (ristiin-linkitys)
 `org_id, source, source_name, y_tunnus, confidence`
-- source: stea, eura, um, bf, helsinki, va
+- source: stea, eura, um, bf, helsinki, va, fts
 - confidence: y_tunnus (luotettava), name_match (riski), high, new
 
 ### org_families / org_families_cache (avainsanapohjaiset organisaatioryhmät)
@@ -344,5 +350,6 @@ Kun haku osuu useaan org_id:hen (esim. "SASK" → SASK + SASKY), komento varoitt
 | Helsinki (nuoriso) | `data/helsinki/nuoriso.csv` |
 | UM/IATI | `data/iati/Finland_total_*.xml` (14 tiedostoa, 2012-2025) |
 | VA | `data/okm/Myönteiset päätökset.xlsx`, `data/okm/Kielteiset päätökset.xlsx` |
+| FTS | `data/fts/` (API/CSV-export EU Financial Transparency System) |
 
 Lisätietoa datalähteistä ja verifioinnista: `SOURCES.md`
