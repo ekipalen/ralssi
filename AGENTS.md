@@ -1,6 +1,6 @@
 # Rälssi — julkisen rahoituksen tutkimustyökalu
 
-Tietokanta suomalaisesta julkisesta rahoituksesta. 6 datalähdettä, ~148 000 riviä, yhteensä ~41 mrd €. Tarkoitettu tutkivaan analyysiin: ketkä saavat rahaa, mistä lähteistä, ja kuinka paljon?
+Tietokanta suomalaisesta julkisesta rahoituksesta. 7 datalähdettä, ~148 000 riviä, yhteensä ~41 mrd €. Tarkoitettu tutkivaan analyysiin: ketkä saavat rahaa, mistä lähteistä, ja kuinka paljon?
 
 > **Suositus agenteille:** Käytä oletuksena `--third-sector`-lippua (oletus: päällä). Kolmanteen sektoriin rajattuna data on usein kiinnostavampaa ja datamäärä hallittavampaa. Poista suodatus `--no-third-sector`-lipulla vain kun käyttäjä nimenomaisesti pyytää yliopisto-, yritys- tai viranomaisdata.
 
@@ -61,6 +61,7 @@ uv run ralssi.py verify "Kansanvalistusseura"  # 6. Varmista alkuperäislähteis
 | UM/IATI | `um_grants` | 23 301 | Kehitysyhteistyö (ulkoministeriö) |
 | Helsinki | `helsinki_grants` | 11 037 | Kaupungin avustukset |
 | VA | `va_grants` | 8 537 | Valtionavustukset (haeavustuksia.fi): OKM, Akatemia, TEM, STM, THL, UM, VNK, OM, YM, OPH |
+| FTS | `fts_grants` | 4 652 | EU Financial Transparency System (suorat EU-maksut) |
 
 Organisaatiot linkitetty ristiin `org_mapping`-taululla (~53 000 riviä, ~5 500 orgia 2+ lähteessä). Linkitys perustuu y-tunnukseen (luotettava) tai nimeen (riski väärille osumille).
 
