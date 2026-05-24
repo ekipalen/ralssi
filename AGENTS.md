@@ -2,6 +2,23 @@
 
 Tietokanta suomalaisesta julkisesta rahoituksesta. 6 datalähdettä, ~148 000 riviä, yhteensä ~41 mrd €. Tarkoitettu tutkivaan analyysiin: ketkä saavat rahaa, mistä lähteistä, ja kuinka paljon?
 
+> **Suositus agenteille:** Käytä oletuksena `--third-sector`-lippua (oletus: päällä). Kolmanteen sektoriin rajattuna data on usein kiinnostavampaa ja datamäärä hallittavampaa. Poista suodatus `--no-third-sector`-lipulla vain kun käyttäjä nimenomaisesti pyytää yliopisto-, yritys- tai viranomaisdata.
+
+## Kolmas sektori -suodatus (`--third-sector` / `--no-third-sector`)
+
+Oletuksena PÄÄLLÄ kaikissa komennoissa (paitsi `sql`, `setup`, `sources`, `verify`). Suodattaa tuloksista pois organisaatiot joiden sector-sarake org_mapping-taulussa on: `company`, `government`, `university`, `research`, `international`.
+
+Jos sector on NULL, käytetään nimipohjaista heuristiikkaa: poissuljettavia nimiä ovat mm. Oy, Ab, Oyj, Ltd, Ky, tmi, kaupunki, stad, yliopisto, universitet, university, ammattikorkeakoulu, korkeakoulusäätiö.
+
+```bash
+uv run ralssi.py top eura -n 10                    # Vain kolmas sektori (oletus)
+uv run ralssi.py --no-third-sector top eura -n 10  # Kaikki organisaatiot
+uv run ralssi.py hunters --min 3                   # Kolmas sektori, 3+ lähdettä
+uv run ralssi.py --no-third-sector hunters         # Kaikki, sis. yliopistot/yritykset
+```
+
+Kolmannen sektorin organisaatiot = yhdistykset (ry), säätiöt (sr), osuuskunnat, kirkko. Poissuljetut = yritykset, yliopistot, tutkimuslaitokset, viranomaiset, kansainväliset organisaatiot.
+
 ## Setup
 
 Ainoa vaatimus: [uv](https://docs.astral.sh/uv/). Se asentaa Pythonin automaattisesti.

@@ -87,6 +87,20 @@ uv run ralssi.py sql "SELECT source_name, source, org_id FROM org_mapping WHERE 
 
 All commands except `verify` support `--json` for machine-readable output.
 
+## Third-sector filter
+
+By default, results are filtered to show only third-sector organizations (associations,
+foundations, cooperatives, church). This excludes companies, universities, research
+institutes, government bodies, and international organizations.
+
+```bash
+uv run ralssi.py top eura -n 10                    # Third-sector only (default)
+uv run ralssi.py --no-third-sector top eura -n 10  # All organizations
+```
+
+The filter uses the `sector` column in `org_mapping`. For names not in the mapping,
+a name-based heuristic is applied (e.g., names containing Oy, Ab, kaupunki, yliopisto).
+
 ## Commands
 
 | Command | Description |

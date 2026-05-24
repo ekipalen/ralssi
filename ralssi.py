@@ -20,6 +20,16 @@ import urllib.request
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(SCRIPT_DIR, "data", "funding.db")
 
+# Sectors excluded by --third-sector filter (default ON)
+EXCLUDED_SECTORS = {"company", "government", "university", "research", "international"}
+
+# Name patterns indicating non-third-sector orgs (used when sector is NULL)
+_NON_THIRD_SECTOR_PATTERNS = [
+    " oy", " ab", " oyj", " ltd", " ky", " tmi",
+    "kaupunki", "stad", "yliopisto", "universitet", "university",
+    "ammattikorkeakoulu", "korkeakoulusäätiö", "avoin yhtiö", "kommandiittiyhtiö",
+]
+
 SOURCES = {
     "stea":     {"table": "grants",         "name": "jarjesto",    "amount": "myonnetty",          "year": "vuosi", "desc": "STEA (avustuskeskus)"},
     "eura":     {"table": "eura_all",       "name": "toteuttaja",  "amount": "myonnetty_eu_valtio","year": None,    "desc": "EU structural funds (EURA)"},
@@ -41,6 +51,102 @@ def connect():
 def die(msg):
     print(f"Error: {msg}", file=sys.stderr)
     sys.exit(1)
+
+
+def _is_non_third_sector_name(name):
+    """Heuristic: return True if name looks like a non-third-sector org."""
+    if not name:
+        return False
+    lower = name.lower()
+    for pat in _NON_THIRD_SECTOR_PATTERNS:
+        if pat in lower:
+            return True
+    return False
+
+
+def _third_sector_sql_for_source(source, third_sector):
+    """Return (WHERE fragment, params) to filter a source table by third sector.
+
+    Uses org_mapping.sector when available, falls back to name heuristic.
+    Returns ("", []) when third_sector is False (no filtering).
+    """
+    if not third_sector:
+        return "", []
+    s = SOURCES[source]
+    name_col = s["name"]
+    # Subquery: exclude names whose org_mapping sector is in EXCLUDED_SECTORS
+    excluded_list = ",".join(f"'{s}'" for s in EXCLUDED_SECTORS)
+    clause = (
+        f"{name_col} NOT IN ("
+        f"SELECT source_name FROM org_mapping "
+        f"WHERE source = ? AND sector IN ({excluded_list})"
+        f")"
+    )
+    return clause, [source]
+
+
+def _third_sector_filter_rows(rows, name_key, conn, source, third_sector):
+    """Filter a list of row dicts/Row objects, removing non-third-sector orgs.
+
+    Uses org_mapping.sector, falls back to name heuristic for names not in mapping.
+    Returns filtered list when third_sector is True.
+    """
+    if not third_sector:
+        return rows
+    # Build a cache of sector by (source, name)
+    names = set(r[name_key] for r in rows if r[name_key])
+    if not names:
+        return rows
+    ph = ",".join("?" for _ in names)
+    sector_rows = conn.execute(
+        f"SELECT source_name, sector FROM org_mapping WHERE source = ? AND source_name IN ({ph})",
+        [source] + list(names),
+    ).fetchall()
+    sector_map = {r["source_name"]: r["sector"] for r in sector_rows}
+    result = []
+    for r in rows:
+        name = r[name_key]
+        sector = sector_map.get(name)
+        if sector and sector in EXCLUDED_SECTORS:
+            continue
+        if sector is None and _is_non_third_sector_name(name):
+            continue
+        result.append(r)
+    return result
+
+
+def _third_sector_name_excluded(name, conn, source=None):
+    """Check if an org name should be excluded by third-sector filter.
+
+    If source given, checks org_mapping for that source.
+    Otherwise checks all sources. Falls back to name heuristic.
+    """
+    if source:
+        row = conn.execute(
+            "SELECT sector FROM org_mapping WHERE source = ? AND source_name = ?",
+            [source, name],
+        ).fetchone()
+        if row:
+            return row["sector"] in EXCLUDED_SECTORS
+    else:
+        rows = conn.execute(
+            "SELECT DISTINCT sector FROM org_mapping WHERE source_name = ?",
+            [name],
+        ).fetchall()
+        if rows:
+            return all(r["sector"] in EXCLUDED_SECTORS for r in rows)
+    return _is_non_third_sector_name(name)
+
+
+def _third_sector_org_excluded(conn, org_id):
+    """Check if an org_id's sector(s) are all in EXCLUDED_SECTORS."""
+    rows = conn.execute(
+        "SELECT DISTINCT sector FROM org_mapping WHERE org_id = ? AND COALESCE(is_category, 0) = 0",
+        [org_id],
+    ).fetchall()
+    if not rows:
+        return False
+    return all(r["sector"] in EXCLUDED_SECTORS for r in rows if r["sector"])
 
 
 def _escape_like(s):
@@ -257,7 +363,13 @@ def _summarize_org_group(conn, source_names, json_mode, detail=False, detail_sou
 
 def cmd_org(args, conn):
     name = args.name
+    third_sector = args.third_sector
     org_groups = resolve_org(conn, name)
+
+    # Third-sector filter: remove org groups whose sector is excluded
+    if third_sector and org_groups:
+        org_groups = [g for g in org_groups
+                      if g["org_id"] is None or not _third_sector_org_excluded(conn, g["org_id"])]
 
     if not org_groups:
         source_names = {}
@@ -267,7 +379,12 @@ def cmd_org(args, conn):
                 [f"%{_escape_like(name)}%"],
             ).fetchall()
             if found:
-                source_names[src] = set(r[0] for r in found)
+                names_set = set(r[0] for r in found)
+                if third_sector:
+                    names_set = {n for n in names_set
+                                 if not _third_sector_name_excluded(n, conn, src)}
+                if names_set:
+                    source_names[src] = names_set
         if source_names:
             org_groups = [{"org_id": None, "match": name, "sources": source_names}]
 
@@ -358,6 +475,7 @@ def _aggregate_by_ytunnus(conn, src, since=None, until=None):
 def cmd_hunters(args, conn):
     min_sources, limit, sort_by = args.min, args.limit, args.sort
     verbose = getattr(args, "verbose", False)
+    third_sector = args.third_sector
     since, until = _resolve_year_bounds(args)
     source_filter = set(s.strip().lower() for s in args.sources.split(",")) if getattr(args, "sources", None) else None
     if source_filter:
@@ -447,12 +565,33 @@ def cmd_hunters(args, conn):
                         entry["total"] += t
                         entry["source_totals"][src] = t
 
+    # Build sector lookup for third-sector filtering
+    if third_sector:
+        _sector_by_ytunnus = {}
+        for row in conn.execute("SELECT DISTINCT y_tunnus, sector FROM org_mapping WHERE y_tunnus IS NOT NULL AND y_tunnus != ''"):
+            _sector_by_ytunnus.setdefault(row["y_tunnus"], set()).add(row["sector"])
+
     results = []
     for key, d in orgs.items():
         if source_filter and not (d["sources"] >= source_filter):
             continue
         if len(d["sources"]) < min_sources:
             continue
+        # Third-sector filter
+        if third_sector:
+            excluded = False
+            if key.startswith("_org_"):
+                oid = int(key[5:])
+                excluded = _third_sector_org_excluded(conn, oid)
+            elif key in _sector_by_ytunnus:
+                sectors = _sector_by_ytunnus[key]
+                excluded = all(s in EXCLUDED_SECTORS for s in sectors if s)
+            else:
+                # Fallback: name heuristic
+                name = sorted(d["names"])[0] if d["names"] else key
+                excluded = _is_non_third_sector_name(name)
+            if excluded:
+                continue
         flags = []
         s = d["sources"]
         if "stea" in s and "bf" in s:
@@ -488,6 +627,8 @@ def cmd_hunters(args, conn):
     yr_label = _year_filter_label(args)
     if yr_label:
         header += f" ({yr_label})"
+    if third_sector:
+        header += " [third-sector]"
     print(f"{header}\n")
     if verbose:
         for r in results:
@@ -511,18 +652,34 @@ def cmd_top(args, conn):
     source, n = args.source, args.n
     since, until = _resolve_year_bounds(args)
     yr_label = _year_filter_label(args)
+    third_sector = args.third_sector
 
     if source:
         if source not in SOURCES:
             die(f"Unknown source: {source}. Use: {', '.join(SOURCES)}")
         s = SOURCES[source]
         yr_clause, yr_params = _year_where(source, since, until)
-        where = f"WHERE {yr_clause}" if yr_clause else ""
+        ts_clause, ts_params = _third_sector_sql_for_source(source, third_sector)
+        where_parts = []
+        params = []
+        if yr_clause:
+            where_parts.append(yr_clause)
+            params.extend(yr_params)
+        if ts_clause:
+            where_parts.append(ts_clause)
+            params.extend(ts_params)
+        where = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
+        # Fetch more than n to account for heuristic filtering on NULLs
+        fetch_limit = n * 5 if third_sector else n
         rows = conn.execute(
             f"SELECT {s['name']} as name, SUM({s['amount']}) as total, COUNT(*) as cnt "
             f"FROM {s['table']} {where} GROUP BY {s['name']} ORDER BY total DESC LIMIT ?",
-            yr_params + [n],
+            params + [fetch_limit],
         ).fetchall()
+        # Apply name heuristic for NULLs not in org_mapping
+        if third_sector:
+            rows = [r for r in rows if not _is_non_third_sector_name(r["name"])]
+        rows = rows[:n]
         if args.json:
             print(json.dumps([{"name": r["name"], "total": r["total"], "grants": r["cnt"]} for r in rows],
                               ensure_ascii=False, indent=2))
@@ -530,6 +687,8 @@ def cmd_top(args, conn):
         title = f"Top {n} recipients — {source.upper()}"
         if yr_label:
             title += f" ({yr_label})"
+        if third_sector:
+            title += " [third-sector]"
         print(f"{title}\n")
         print_table(["#", "Name", "Total", "Grants"], [
             [str(i), textwrap.shorten(r["name"] or "-", 50, placeholder="..."),
@@ -540,13 +699,24 @@ def cmd_top(args, conn):
         combined = {}
         for src, s in SOURCES.items():
             yr_clause, yr_params = _year_where(src, since, until)
-            where = f"WHERE {yr_clause}" if yr_clause else ""
+            ts_clause, ts_params = _third_sector_sql_for_source(src, third_sector)
+            where_parts = []
+            params = []
+            if yr_clause:
+                where_parts.append(yr_clause)
+                params.extend(yr_params)
+            if ts_clause:
+                where_parts.append(ts_clause)
+                params.extend(ts_params)
+            where = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
             for row in conn.execute(
                 f"SELECT {s['name']} as name, SUM({s['amount']}) as total FROM {s['table']} {where} GROUP BY {s['name']}",
-                yr_params,
+                params,
             ):
                 key = (row["name"] or "").strip().upper()
                 if key:
+                    if third_sector and _is_non_third_sector_name(row["name"]):
+                        continue
                     combined.setdefault(key, {"name": row["name"], "total": 0})
                     combined[key]["total"] += row["total"] or 0
         top = sorted(combined.values(), key=lambda x: -x["total"])[:n]
@@ -556,6 +726,8 @@ def cmd_top(args, conn):
         title = f"Top {n} recipients — all sources (approximate, name-based)"
         if yr_label:
             title += f" ({yr_label})"
+        if third_sector:
+            title += " [third-sector]"
         print(f"{title}\n")
         print_table(["#", "Name", "Total"], [
             [str(i), textwrap.shorten(r["name"] or "-", 55, placeholder="..."), fmt_money(r["total"])]
@@ -928,6 +1100,11 @@ def cmd_vsearch(args, conn):
                 "org": row["org"], "desc": row["desc"],
             })
 
+    # Third-sector filter
+    if args.third_sector:
+        detailed = [r for r in detailed
+                    if not _third_sector_name_excluded(r["org"], conn, r["source"])]
+
     # Org deduplication: keep only highest-similarity result per (source, org)
     if dedup:
         seen_count = {}
@@ -1042,6 +1219,7 @@ def cmd_search(args, conn):
     source_filter = args.source
     since, until = _resolve_year_bounds(args)
     yr_label = _year_filter_label(args)
+    third_sector = args.third_sector
     results = []
 
     for src, sf in SEARCH_FIELDS.items():
@@ -1054,13 +1232,22 @@ def cmd_search(args, conn):
         if yr_clause:
             where += f" AND ({yr_clause})"
             params.extend(yr_params)
+        # Third-sector filter via org_mapping
+        src_for_mapping = src
+        ts_clause, ts_params = _third_sector_sql_for_source(src_for_mapping, third_sector)
+        if ts_clause:
+            where += f" AND ({ts_clause})"
+            params.extend(ts_params)
+        fetch_limit = limit * 3 if third_sector else limit
         rows = conn.execute(
             f"SELECT {sf['id']} as item_id, {sf['name']} as org, {sf['amount']} as amount, "
             f"{sf['year']} as yr, {', '.join(sf['text'])} FROM {sf['table']} "
             f"WHERE {where} ORDER BY {sf['amount']} DESC LIMIT ?",
-            params + [limit],
+            params + [fetch_limit],
         ).fetchall()
         for r in rows:
+            if third_sector and _is_non_third_sector_name(r["org"]):
+                continue
             txt = " | ".join(filter(None, [r[col] for col in sf["text"]]))
             yr = r["yr"]
             if isinstance(yr, str) and len(yr) >= 4:
@@ -1085,6 +1272,8 @@ def cmd_search(args, conn):
     title = f'Search: "{term}" ({len(results)} results)'
     if yr_label:
         title += f" [{yr_label}]"
+    if third_sector:
+        title += " [third-sector]"
     print(f'{title}\n')
     print_table(["Source", "ID", "Year", "Amount", "Org", "Text"], [
         [r["source"].upper(), str(r["id"]), str(r["year"] or "-"), fmt_money(r["amount"]),
@@ -1191,7 +1380,13 @@ def _get_year(source, row):
 
 def cmd_profile(args, conn):
     name = args.name
+    third_sector = args.third_sector
     org_groups = resolve_org(conn, name)
+
+    # Third-sector filter
+    if third_sector and org_groups:
+        org_groups = [g for g in org_groups
+                      if g["org_id"] is None or not _third_sector_org_excluded(conn, g["org_id"])]
 
     if not org_groups:
         die(f'No org found matching "{name}"')
@@ -1359,6 +1554,10 @@ def cmd_setup(args):
 
 def main():
     parser = argparse.ArgumentParser(prog="ralssi", description="Finnish funding data explorer")
+    parser.add_argument("--third-sector", action="store_true", default=True, dest="third_sector",
+                        help="Filter to third-sector orgs only (default: on)")
+    parser.add_argument("--no-third-sector", action="store_false", dest="third_sector",
+                        help="Disable third-sector filter (show all orgs)")
     sub = parser.add_subparsers(dest="command")
 
     def _json(p):
