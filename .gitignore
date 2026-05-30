@@ -11,3 +11,4 @@ data/*.xlsx
 data/*.xlsm
 data/helsinki/
 data/okm/
+data/funding.db.bak-*
