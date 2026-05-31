@@ -23,7 +23,7 @@ ROOT = os.path.dirname(SCRIPT_DIR)
 DB_PATH = os.path.join(ROOT, "data", "funding.db")
 SECRETS_PATH = os.path.expanduser("~/.config/voice-bot/secrets.env")
 WHERE = "myonnetty > 0"
-BATCH_SIZE = 20
+BATCH_SIZE = int(os.getenv("ENRICH_BATCH_SIZE", "20"))
 
 
 def load_api_key():
