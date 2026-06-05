@@ -32,6 +32,7 @@ _NON_THIRD_SECTOR_PATTERNS = [
 
 SOURCES = {
     "stea":     {"table": "grants",         "name": "jarjesto",    "amount": "myonnetty",          "year": "vuosi", "desc": "STEA (avustuskeskus)"},
+    "ray":      {"table": "ray_grants",     "name": "jarjesto",    "amount": "myonnetty",          "year": "vuosi", "desc": "RAY (Raha-automaattiyhdistys 2000-2016)"},
     "eura":     {"table": "eura_all",       "name": "toteuttaja",  "amount": "myonnetty_eu_valtio","year": None,    "desc": "EU structural funds (EURA)"},
     "bf":       {"table": "bf_awarded",     "name": "organisation","amount": "total_eur",          "year": "year",  "desc": "Business Finland"},
     "um":       {"table": "um_grants",      "name": "organisation","amount": "amount",             "year": "year",  "desc": "UM/IATI dev cooperation"},
@@ -39,6 +40,10 @@ SOURCES = {
     "va":       {"table": "va_grants",      "name": "organisation","amount": "granted_eur",        "year": "year",  "desc": "Valtionavustukset (haeavustuksia.fi)"},
     "fts":      {"table": "fts_grants",     "name": "organisation","amount": "amount",             "year": "year",  "desc": "EU FTS (Financial Transparency System)"},
 }
+
+# Canonical source order = SOURCES insertion order. Derive every source-list from this
+# (never hardcode the list of sources) so adding a source is a single edit to SOURCES above.
+SOURCE_ORDER = list(SOURCES.keys())
 
 
 def connect():
@@ -261,7 +266,7 @@ def _detail_grants(source, rows, limit):
     s = SOURCES[source]
     details = []
     for r in rows:
-        if source == "stea":
+        if source in ("stea", "ray"):
             details.append({
                 "year": r["vuosi"], "amount": r["myonnetty"],
                 "kayttotarkoitus": r["kayttotarkoitus"] if "kayttotarkoitus" in r.keys() else None,
@@ -308,7 +313,7 @@ def _print_detail_table(source, details):
     if not details:
         print("    (no grants)")
         return
-    if source == "stea":
+    if source in ("stea", "ray"):
         print_table(["Year", "Amount", "Kayttotarkoitus"], [
             [str(d["year"] or "-"), fmt_money(d["amount"]),
              textwrap.shorten(d["kayttotarkoitus"] or "-", 60, placeholder="...")]
@@ -357,7 +362,7 @@ def _summarize_org_group(conn, source_names, json_mode, detail=False, detail_sou
     """Summarize one org group across sources. Returns (output_list, combined_total)."""
     combined_total = 0
     output = []
-    for src in ["stea", "eura", "bf", "um", "helsinki", "va", "fts"]:
+    for src in SOURCE_ORDER:
         if src not in source_names:
             continue
         rows = query_source(conn, src, source_names[src])
@@ -467,6 +472,20 @@ def cmd_org(args, conn):
             print()
 
 
+def _sources_with_ytunnus(conn):
+    """Sources whose grant table has a y_tunnus column (aggregated directly by y_tunnus).
+
+    Derived from the schema, not hardcoded — a new source with a y_tunnus column is
+    picked up automatically; sources without one (um, helsinki) fall back to org_mapping.
+    """
+    result = set()
+    for src, s in SOURCES.items():
+        cols = conn.execute(f"PRAGMA table_info({s['table']})").fetchall()
+        if any(c["name"] == "y_tunnus" for c in cols):
+            result.add(src)
+    return result
+
+
 def _aggregate_by_ytunnus(conn, src, since=None, until=None):
     """Aggregate grants by y_tunnus for a source that has y_tunnus column."""
     s = SOURCES[src]
@@ -498,9 +517,8 @@ def cmd_hunters(args, conn):
         min_sources = args.min
     orgs = {}
 
-    ytunnus_sources = {"stea", "eura", "bf", "va", "fts"}
-    if source_filter:
-        ytunnus_sources = ytunnus_sources & source_filter
+    ytunnus_all = _sources_with_ytunnus(conn)
+    ytunnus_sources = (ytunnus_all & source_filter) if source_filter else set(ytunnus_all)
     for src in ytunnus_sources:
         for row in _aggregate_by_ytunnus(conn, src, since=since, until=until):
             yt = row["y_tunnus"]
@@ -514,7 +532,8 @@ def cmd_hunters(args, conn):
             orgs[yt]["source_totals"][src] = orgs[yt]["source_totals"].get(src, 0) + total
 
     mapping_by_oid = {}
-    mapping_sources = {"um", "helsinki"}
+    # Sources without a y_tunnus column are matched via org_mapping (org_id) instead.
+    mapping_sources = set(SOURCES) - ytunnus_all
     if source_filter:
         mapping_sources = mapping_sources & source_filter
     if mapping_sources or verbose:
@@ -532,14 +551,13 @@ def cmd_hunters(args, conn):
             for e in entries:
                 entry["names"].add(e["source_name"])
 
-            for check_src, tbl_amount, tbl_name, tbl_table in [
-                ("um", "amount", "organisation", "um_grants"),
-                ("helsinki", "myonnetty", "hakija", "helsinki_grants"),
-            ]:
+            for check_src in sorted(mapping_sources):
                 if check_src not in src_set:
                     continue
                 if source_filter and check_src not in source_filter:
                     continue
+                cs = SOURCES[check_src]
+                tbl_amount, tbl_name, tbl_table = cs["amount"], cs["name"], cs["table"]
                 names = [e["source_name"] for e in entries if e["source"] == check_src]
                 ph = ",".join("?" for _ in names)
                 yr_clause, yr_params = _year_where(check_src, since, until)
@@ -768,7 +786,7 @@ def cmd_verify(args, conn):
         print("  Not found in org_mapping. Trying direct search...\n")
 
     found_any = False
-    for src in ["stea", "eura", "bf", "um", "helsinki", "va", "fts"]:
+    for src in SOURCE_ORDER:
         names = source_names.get(src, set())
         if not names:
             s = SOURCES[src]
@@ -1199,7 +1217,7 @@ def cmd_vsearch(args, conn):
 
     # Embedding coverage info
     coverage_parts = []
-    all_sources_ordered = ["stea", "eura", "um", "bf", "helsinki", "va", "fts"]
+    all_sources_ordered = SOURCE_ORDER
     for src in all_sources_ordered:
         if src not in emb_files:
             tbl = SOURCES[src]["table"]
@@ -1225,6 +1243,7 @@ def cmd_vsearch(args, conn):
 
 SEARCH_FIELDS = {
     "stea":     {"table": "grants",         "text": ["kayttotarkoitus"],               "name": "jarjesto",    "amount": "myonnetty",          "year": "vuosi", "id": "id"},
+    "ray":      {"table": "ray_grants",     "text": ["kayttotarkoitus", "avustuslaji"], "name": "jarjesto",    "amount": "myonnetty",          "year": "vuosi", "id": "id"},
     "eura":     {"table": "eura_all",       "text": ["nimi", "tiivistelma"],            "name": "toteuttaja",  "amount": "myonnetty_eu_valtio","year": "aloituspvm", "id": "hankekoodi"},
     "um":       {"table": "um_grants",      "text": ["title", "description"],           "name": "organisation","amount": "amount",             "year": "year", "id": "activity_id"},
     "helsinki":	{"table": "helsinki_grants", "text": ["hakemustyyppi", "avustuslaji"],   "name": "hakija",      "amount": "myonnetty",          "year": "vuosi", "id": "id"},
@@ -1309,8 +1328,8 @@ def cmd_search(args, conn):
     if not source_filter:
         if "um" not in sources_found:
             print(f'\nHint: UM data is in English. Try also: search "{term}" in English')
-        if not (sources_found & {"stea", "eura"}):
-            print(f'\nHint: STEA/EURA data is in Finnish. Try also: search "{term}" in Finnish')
+        if not (sources_found & {"stea", "ray", "eura"}):
+            print(f'\nHint: STEA/RAY/EURA data is in Finnish. Try also: search "{term}" in Finnish')
 
 
 def _year_filter_label(args):
@@ -1425,7 +1444,7 @@ def cmd_profile(args, conn):
     for gi, g in enumerate(org_groups):
         matrix = {}
         active_sources = []
-        for src in ["stea", "eura", "bf", "um", "helsinki", "va", "fts"]:
+        for src in SOURCE_ORDER:
             if src not in g["sources"]:
                 continue
             rows = query_source(conn, src, g["sources"][src])
@@ -1603,7 +1622,7 @@ def main():
     _add_year_args(p)
 
     p = _json(sub.add_parser("top", help="Biggest recipients"))
-    p.add_argument("source", nargs="?", help="Source (stea/eura/bf/um/helsinki/va/fts)")
+    p.add_argument("source", nargs="?", help=f"Source ({'/'.join(SOURCES)})")
     p.add_argument("-n", type=int, default=20, help="Number of results (default: 20)")
     _add_year_args(p)
 
