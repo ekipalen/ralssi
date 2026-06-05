@@ -1562,7 +1562,7 @@ def cmd_sql(args, conn):
     print_table(headers, [[str(v) if v is not None else "NULL" for v in list(r)] for r in rows])
 
 
-RELEASE_URL = "https://github.com/ekipalen/ralssi/releases/download/v2.1/ralssi-data.zip"
+RELEASE_URL = "https://github.com/ekipalen/ralssi/releases/download/v2.2/ralssi-data.zip"
 
 
 def cmd_setup(args):
