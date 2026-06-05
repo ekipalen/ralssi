@@ -11,7 +11,7 @@ Tämä ohje dokumentoi prosessin jolla VA-lähde (valtionavustukset) lisättiin 
 4. Org mapping          → Y-tunnus-linkitys olemassaoleviin org_id:hin
 5. Embeddings           → text-embedding-3-small, 384d vektorit
 6. Enrichment           → GPT-4.1-nano: oneliner, tags, concreteness
-7. ralssi.py päivitys   → SOURCES, SEARCH_FIELDS, emb_files + komentokohtaiset lisäykset
+7. ralssi.py päivitys   → SOURCES + SEARCH_FIELDS dict (listat johdetaan; vsearch erikseen)
 8. Dokumentaatio        → README.md, AGENTS.md, SOURCES.md
 9. Testit               → kaikki komennot, data integrity
 10. Paketointi          → zip, GitHub release, git commit+push
@@ -107,40 +107,46 @@ Luo `scripts/enrich_<nimi>.py`.
 
 ## 7. ralssi.py — muutoskohteet
 
-Kaikki paikat joita pitää päivittää kun lisätään uusi lähde:
+> **Päivitetty 5.6.2026 (single-source refactor):** lähdelistat johdetaan nyt
+> `SOURCE_ORDER`/`SOURCES`-rekisteristä, eikä niitä enää kovakoodata moneen paikkaan.
+> Useimmiten **uusi lähde = 2 dict-merkintää** (kohdat 7a–7b). Loput ovat tarpeen vain
+> jos lähteellä on semanttinen haku (7c) tai poikkeava sarakemuoto (7d).
 
-### 7a. SOURCES dict (~rivi 24)
+### 7a. SOURCES dict (~rivi 33) — PAKOLLINEN
 ```python
 "<nimi>": {"table": "<nimi>_grants", "name": "<org_col>", "amount": "<amount_col>", "year": "<year_col>", "desc": "Kuvaus"},
 ```
+Tästä johdetaan automaattisesti: `SOURCE_ORDER`, kaikki lähdelistat (`_summarize_org_group`,
+`cmd_verify`, `cmd_profile`, vsearch-coverage), `top`/`org` argparse-choices, sekä
+`cmd_sources`/`cmd_top` aggregaatit. **Ei erillisiä lähdelistoja päivitettävänä.**
 
-### 7b. SEARCH_FIELDS dict (~rivi 1025)
+### 7b. SEARCH_FIELDS dict (~rivi 1240) — PAKOLLINEN (fulltext-haku)
 ```python
 "<nimi>": {"table": "<nimi>_grants", "text": ["<text_col1>", "<text_col2>"], "name": "<org_col>", "amount": "<amount_col>", "year": "<year_col>", "id": "<id_col>"},
 ```
+`search`-komennon `--source`-choices johdetaan tästä.
 
-### 7c. emb_files dict (cmd_vsearch sisällä, ~rivi 762)
+### 7c. EMB_FILES dict (~rivi 48) — vain jos semanttinen haku
 ```python
 "<nimi>": ("<nimi>_embeddings.npy", "<nimi>_embedding_ids.json"),
 ```
+Moduulitason rekisteri. `vsearch --source`-choices johdetaan tästä, coverage näkyy
+automaattisesti. Lisää MYÖS:
+- **cmd_vsearch detail-fetch** (`elif src == "<nimi>":`) — org/year/amount/desc haku id:llä
+- **cmd_vsearch seed-kuvaus** (`elif query_source_key == "<nimi>":`)
+- **lookup_id int-muunnos** (`("stea", "ray", "va", "fts", ...)`) jos id on numeerinen
 
-### 7d. Lähdelistat — hae ja lisää `<nimi>` näihin:
-```bash
-grep -n '"stea", "eura", "bf", "um", "helsinki"' ralssi.py
-```
-Tyypillisesti 3-5 paikkaa: `_summarize_org_group`, `cmd_verify`, `cmd_profile`, `all_sources_ordered`.
+> Seed-haku osaa jo itse rajata embeddattuihin riveihin (osittainen kattavuus ok).
 
-### 7e. Komentokohtaiset lisäykset:
+### 7d. Sarakemuotoiset erityishaarat — vain jos poikkeaa
+Geneeriset funktiot (summary, year, top, org, profile, hunters) toimivat suoraan
+`SOURCES`-metadatasta. Erityishaara tarvitaan vain jos:
+- **y_tunnus**: ei toimenpiteitä — `_sources_with_ytunnus` tunnistaa sarakkeen automaattisesti.
+- **_detail_grants() / _print_detail_table()**: lisää haara vain jos `org --detail`-näkymän
+  sarakkeet poikkeavat olemassa olevista (voi myös liittää olemassa olevaan, esim. `in ("stea", "ray")`).
+- **cmd_verify**: lähdekohtainen verify-info (Y-tunnus, URL, raakadata) jos relevanttia.
 
-1. **_detail_grants()** — lisää `elif source == "<nimi>":` haara joka poimii detail-kentät
-2. **_print_detail_table()** — lisää `elif source == "<nimi>":` haara joka tulostaa taulukkon
-3. **cmd_hunters / ytunnus_sources** — lisää `<nimi>` jos taululla on y_tunnus-sarake
-4. **cmd_vsearch** — lisää detail-fetch (`elif src == "<nimi>":`) ja query description -haara
-5. **cmd_vsearch argparse** — lisää `<nimi>` choices-listaan `--source`
-6. **cmd_vsearch lookup_id** — lisää `<nimi>` int-muunnokseen jos id on numeerinen
-7. **cmd_verify** — lisää lähdekohtainen verify-info (Y-tunnus, URL, raakadata)
-
-### 7f. RELEASE_URL — päivitä versio
+### 7e. RELEASE_URL — päivitä versio kun julkaiset uuden datasetin
 
 ## 8. Dokumentaatio
 

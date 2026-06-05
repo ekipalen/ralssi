@@ -45,6 +45,17 @@ SOURCES = {
 # (never hardcode the list of sources) so adding a source is a single edit to SOURCES above.
 SOURCE_ORDER = list(SOURCES.keys())
 
+# Sources with a vector index (vsearch). Keys must be a subset of SOURCES; a source
+# without embeddings simply isn't listed here and shows "no index" in coverage.
+EMB_FILES = {
+    "stea": ("embeddings.npy", "embedding_ids.json"),
+    "ray":  ("ray_embeddings.npy", "ray_embedding_ids.json"),
+    "eura": ("eura_embeddings.npy", "eura_embedding_ids.json"),
+    "um":   ("um_embeddings.npy", "um_embedding_ids.json"),
+    "va":   ("va_embeddings.npy", "va_embedding_ids.json"),
+    "fts":  ("fts_embeddings.npy", "fts_embedding_ids.json"),
+}
+
 
 def connect():
     if not os.path.exists(DB_PATH):
@@ -75,6 +86,7 @@ def _prune_missing_sources(conn):
     for s in missing:
         SOURCES.pop(s, None)
         SEARCH_FIELDS.pop(s, None)
+        EMB_FILES.pop(s, None)
     SOURCE_ORDER[:] = [s for s in SOURCE_ORDER if s not in missing]
     print(f"Note: source(s) not loaded in this database, skipping: {', '.join(missing)} "
           f"(run setup / update funding.db to include them)", file=sys.stderr)
@@ -992,13 +1004,7 @@ def cmd_vsearch(args, conn):
     dedup = not args.no_dedup
 
     data_dir = os.path.join(SCRIPT_DIR, "data")
-    emb_files = {
-        "stea": ("embeddings.npy", "embedding_ids.json"),
-        "eura": ("eura_embeddings.npy", "eura_embedding_ids.json"),
-        "um":   ("um_embeddings.npy", "um_embedding_ids.json"),
-        "va":   ("va_embeddings.npy", "va_embedding_ids.json"),
-        "fts":  ("fts_embeddings.npy", "fts_embedding_ids.json"),
-    }
+    emb_files = EMB_FILES
 
     # Resolve item_id: either directly or via --text search
     if args.text:
@@ -1006,10 +1012,22 @@ def cmd_vsearch(args, conn):
             die("Cannot use both item_id and --text at the same time")
         text_term = args.text
         words = text_term.split()
+        # Preload embedded id-sets so the text seed only lands on grants that actually
+        # have a vector (coverage is <100% for some sources, e.g. RAY 61%, FTS 40%).
+        emb_id_sets = {}
+        for src, (_, idf) in emb_files.items():
+            if args.source and src != args.source:
+                continue
+            idp = os.path.join(data_dir, idf)
+            if os.path.exists(idp):
+                with open(idp) as f:
+                    emb_id_sets[src] = set(json.load(f))
         best_match = None
         for src, sf in SEARCH_FIELDS.items():
             if src not in emb_files:
                 continue
+            if args.source and src != args.source:
+                continue  # --source restricts the seed to that source (id stays consistent)
             all_cols = list(sf["text"]) + [sf["name"]]
             if len(words) > 1:
                 word_clauses = []
@@ -1023,11 +1041,13 @@ def cmd_vsearch(args, conn):
                 col_conds = " OR ".join(f"{col} LIKE ? ESCAPE '\\'" for col in all_cols)
                 where = col_conds
                 params = [f"%{_escape_like(text_term)}%" for _ in all_cols]
-            row = conn.execute(
+            cand_rows = conn.execute(
                 f"SELECT {sf['id']} as item_id, {sf['name']} as org, {sf['amount']} as amount "
-                f"FROM {sf['table']} WHERE {where} ORDER BY {sf['amount']} DESC LIMIT 1",
+                f"FROM {sf['table']} WHERE {where} ORDER BY {sf['amount']} DESC LIMIT 25",
                 params,
-            ).fetchone()
+            ).fetchall()
+            idset = emb_id_sets.get(src, set())
+            row = next((r for r in cand_rows if r["item_id"] in idset), None)
             if row and (best_match is None or (row["amount"] or 0) > (best_match[2] or 0)):
                 best_match = (src, row["item_id"], row["amount"], row["org"])
         if not best_match:
@@ -1063,7 +1083,7 @@ def cmd_vsearch(args, conn):
         ids = json.load(f)
 
     # Find the query item index
-    lookup_id = int(item_id) if query_source_key in ("stea", "va", "fts") else item_id
+    lookup_id = int(item_id) if query_source_key in ("stea", "ray", "va", "fts") else item_id
     try:
         idx = ids.index(lookup_id)
     except ValueError:
@@ -1120,6 +1140,13 @@ def cmd_vsearch(args, conn):
             row = conn.execute(
                 "SELECT g.jarjesto as org, g.vuosi as year, g.myonnetty as amount, e.oneliner as desc "
                 "FROM grants g LEFT JOIN enrichments e ON e.grant_id = g.id WHERE g.id = ?",
+                [sid],
+            ).fetchone()
+        elif src == "ray":
+            row = conn.execute(
+                "SELECT g.jarjesto as org, g.vuosi as year, g.myonnetty as amount, "
+                "COALESCE(e.oneliner, g.kayttotarkoitus) as desc "
+                "FROM ray_grants g LEFT JOIN ray_enrichments e ON e.grant_id = g.id WHERE g.id = ?",
                 [sid],
             ).fetchone()
         elif src == "eura":
@@ -1192,6 +1219,13 @@ def cmd_vsearch(args, conn):
     if query_source_key == "stea":
         qrow = conn.execute(
             "SELECT g.jarjesto, e.oneliner FROM grants g LEFT JOIN enrichments e ON e.grant_id = g.id WHERE g.id = ?",
+            [lookup_id],
+        ).fetchone()
+        q_desc = f"{qrow['jarjesto']}: {qrow['oneliner']}" if qrow else item_id
+    elif query_source_key == "ray":
+        qrow = conn.execute(
+            "SELECT g.jarjesto, COALESCE(e.oneliner, g.kayttotarkoitus) as oneliner "
+            "FROM ray_grants g LEFT JOIN ray_enrichments e ON e.grant_id = g.id WHERE g.id = ?",
             [lookup_id],
         ).fetchone()
         q_desc = f"{qrow['jarjesto']}: {qrow['oneliner']}" if qrow else item_id
@@ -1661,7 +1695,7 @@ def main():
     p.add_argument("item_id", nargs="?", help="Grant ID (numeric=STEA, S/A/J-prefix=EURA, else=UM)")
     p.add_argument("--text", help="Find seed grant by keywords (multi-word: all words must match)")
     p.add_argument("--limit", type=int, default=10, help="Number of results (default: 10)")
-    p.add_argument("--source", choices=["stea", "eura", "um", "va", "fts"], help="Search only this source")
+    p.add_argument("--source", choices=list(EMB_FILES), help="Search only this source")
     p.add_argument("--no-dedup", action="store_true", help="Disable org deduplication (default: keep best per org per source)")
 
     p = _json(sub.add_parser("search", help="Fulltext search across all sources"))
