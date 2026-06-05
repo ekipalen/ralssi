@@ -59,6 +59,27 @@ def die(msg):
     sys.exit(1)
 
 
+def _prune_missing_sources(conn):
+    """Drop any registered source whose table is absent from this database.
+
+    Reference data is distributed separately from the code, so a given machine's
+    funding.db may lag behind (e.g. RAY not yet loaded). Rather than crash, adapt
+    the tool to whatever data is actually present and note what's missing on stderr.
+    Mutates SOURCES / SEARCH_FIELDS / SOURCE_ORDER in place so every command follows.
+    """
+    present = {r["name"] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'")}
+    missing = [s for s in SOURCE_ORDER if SOURCES[s]["table"] not in present]
+    if not missing:
+        return
+    for s in missing:
+        SOURCES.pop(s, None)
+        SEARCH_FIELDS.pop(s, None)
+    SOURCE_ORDER[:] = [s for s in SOURCE_ORDER if s not in missing]
+    print(f"Note: source(s) not loaded in this database, skipping: {', '.join(missing)} "
+          f"(run setup / update funding.db to include them)", file=sys.stderr)
+
+
 def _is_non_third_sector_name(name):
     """Heuristic: return True if name looks like a non-third-sector org."""
     if not name:
@@ -1671,6 +1692,7 @@ def main():
         return
 
     conn = connect()
+    _prune_missing_sources(conn)
     commands = {
         "org": cmd_org, "hunters": cmd_hunters, "top": cmd_top,
         "verify": cmd_verify, "sources": cmd_sources,
