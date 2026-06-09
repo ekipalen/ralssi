@@ -1767,6 +1767,46 @@ def cmd_contracts(args, conn):
     attributable to one org); shared wins are reported as a count."""
     third_sector = args.third_sector
 
+    if getattr(args, "buyer", None):
+        # Buyer view: what a contracting authority (e.g. Maahanmuuttovirasto) procured, and
+        # from whom. No third-sector filter here — the point is the buyer's full procurement.
+        rows = conn.execute(
+            "SELECT winner_name, title, value, sole_winner, is_suorahankinta, date_published "
+            "FROM org_public_contracts WHERE buyer LIKE ? ESCAPE '\\' "
+            f"ORDER BY (CASE WHEN sole_winner=1 AND value BETWEEN 0 AND {_CONTRACT_VALUE_CAP} THEN value ELSE 0 END) DESC",
+            [f"%{_escape_like(args.buyer)}%"]
+        ).fetchall()
+        attributable = sum(r["value"] for r in rows
+                           if r["sole_winner"] and r["value"] and 0 <= r["value"] <= _CONTRACT_VALUE_CAP)
+        shared = sum(1 for r in rows if not r["sole_winner"])
+        limit = getattr(args, "limit", None) or 50
+        if args.json:
+            print(json.dumps({
+                "buyer_query": args.buyer, "win_count": len(rows),
+                "attributable_total": attributable, "shared_win_count": shared,
+                "contracts": [{"winner": r["winner_name"], "title": r["title"], "value": r["value"],
+                               "sole_winner": bool(r["sole_winner"]),
+                               "is_suorahankinta": bool(r["is_suorahankinta"]),
+                               "year": (r["date_published"] or "")[:4]} for r in rows[:limit]],
+            }, ensure_ascii=False, indent=2, default=str))
+            return
+        if not rows:
+            die(f'No public contracts with a buyer matching "{args.buyer}".')
+        print(f'Public contracts by buyer matching "{args.buyer}"\n')
+        print(f"  {len(rows)} contracts | attributable (sole-winner) total: {fmt_money(attributable)} "
+              f"| +{shared} shared-win (value not attributable)\n")
+        print_table(["Year", "Value", "Sole", "Suora", "Winner", "Title"], [
+            [(r["date_published"] or "-")[:4],
+             fmt_money(r["value"]) if (r["sole_winner"] and r["value"] and r["value"] <= _CONTRACT_VALUE_CAP) else "-",
+             "yes" if r["sole_winner"] else "no", "yes" if r["is_suorahankinta"] else "no",
+             textwrap.shorten(r["winner_name"] or "-", 28, placeholder="..."),
+             textwrap.shorten(r["title"] or "-", 36, placeholder="...")]
+            for r in rows[:limit]
+        ])
+        if len(rows) > limit:
+            print(f"  ... ({len(rows) - limit} more; raise --limit)")
+        return
+
     if args.top is not None:
         n = args.top or 20
         where, params = ["1=1"], []
@@ -1805,7 +1845,7 @@ def cmd_contracts(args, conn):
         return
 
     if not args.name:
-        die("Usage: contracts <org-name>  |  contracts --top [N]")
+        die("Usage: contracts <org-name>  |  contracts --top [N]  |  contracts --buyer <name>")
     oids = _contract_org_ids(conn, args.name)
     if not oids:
         die(f'No mapped org_id for "{args.name}" (contracts are keyed by org_id; try the exact name).')
@@ -2079,8 +2119,9 @@ def main():
     p.add_argument("name", nargs="?", help="Organisation name (omit and use --top for a ranking)")
     p.add_argument("--top", nargs="?", type=int, const=20, default=None, metavar="N",
                    help="Rank top contract winners (default 20)")
+    p.add_argument("--buyer", help="Show contracts by a contracting authority (e.g. Maahanmuuttovirasto) and who won them")
     p.add_argument("--suorahankinta", action="store_true", help="With --top: only no-competition direct awards")
-    p.add_argument("--limit", type=int, default=50, help="Max contracts shown in org mode (default: 50)")
+    p.add_argument("--limit", type=int, default=50, help="Max contracts shown in org/buyer mode (default: 50)")
 
     p = _json(sub.add_parser("lobbying", help="Lobbying register + political party ties for an org"))
     p.add_argument("name", nargs="?", help="Organisation name")

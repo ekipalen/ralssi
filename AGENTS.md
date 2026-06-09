@@ -145,6 +145,7 @@ uv run ralssi.py families "punainen risti" --json
 uv run ralssi.py contracts "Suomen Punainen Risti"   # Org:n voittamat hankintasopimukset
 uv run ralssi.py contracts --top 20                  # Suurimmat hankintojen voittajat (kolmas sektori)
 uv run ralssi.py contracts --top --suorahankinta     # Vain kilpailuttamattomat suorahankinnat
+uv run ralssi.py contracts --buyer "Maahanmuutto"    # Mitä tilaaja (esim. Migri) on hankkinut ja keneltä
 uv run ralssi.py org "SPR" --contracts               # Liitä hankinnat org-näkymään
 ```
 HILMA-julkiset hankinnat ovat **eri rahavirta kuin avustukset** — älä laske niitä yhteen avustussummien kanssa. Euromäärä summataan VAIN yhden voittajan sopimuksista (`sole_winner=1`); monen voittajan sopimuksen arvoa ei voi kohdistaa yhdelle orgille, ne raportoidaan lukumääränä ("+N shared-win"). Kohdistus org_id:n kautta (sama kuin `org`).
