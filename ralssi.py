@@ -1850,39 +1850,59 @@ def cmd_contracts(args, conn):
     if not oids:
         die(f'No mapped org_id for "{args.name}" (contracts are keyed by org_id; try the exact name).')
     ph = ",".join("?" for _ in oids)
-    rows = conn.execute(
-        f"SELECT winner_name, buyer, title, value, sole_winner, n_winners, is_suorahankinta, "
-        f"procedure_type, date_published, sector FROM org_public_contracts "
-        f"WHERE org_id IN ({ph}) ORDER BY is_suorahankinta DESC, "
-        f"(CASE WHEN sole_winner = 1 THEN value ELSE 0 END) DESC", list(oids)
-    ).fetchall()
-    attributable = sum(r["value"] for r in rows
-                       if r["sole_winner"] and r["value"] and 0 <= r["value"] <= _CONTRACT_VALUE_CAP)
-    shared = sum(1 for r in rows if not r["sole_winner"])
     limit = getattr(args, "limit", None) or 50
+
+    def fetch(side_col):
+        rows = conn.execute(
+            f"SELECT winner_name, buyer, title, value, sole_winner, n_winners, is_suorahankinta, "
+            f"date_published FROM org_public_contracts WHERE {side_col} IN ({ph}) "
+            f"ORDER BY is_suorahankinta DESC, (CASE WHEN sole_winner = 1 THEN value ELSE 0 END) DESC",
+            list(oids)).fetchall()
+        attr = sum(r["value"] for r in rows
+                   if r["sole_winner"] and r["value"] and 0 <= r["value"] <= _CONTRACT_VALUE_CAP)
+        shared = sum(1 for r in rows if not r["sole_winner"])
+        return rows, attr, shared
+
+    won, won_attr, won_shared = fetch("org_id")            # org as winner (myynyt)
+    bought, buy_attr, buy_shared = fetch("buyer_org_id")    # org as buyer (hankkinut)
+
+    def ser(rows, other):
+        return [{other: (r["buyer"] if other == "buyer" else r["winner_name"]),
+                 "title": r["title"], "value": r["value"], "sole_winner": bool(r["sole_winner"]),
+                 "n_winners": r["n_winners"], "is_suorahankinta": bool(r["is_suorahankinta"]),
+                 "year": (r["date_published"] or "")[:4]} for r in rows[:limit]]
     if args.json:
         print(json.dumps({
-            "query": args.name, "org_ids": sorted(oids), "win_count": len(rows),
-            "attributable_total": attributable, "shared_win_count": shared,
-            "contracts": [{"buyer": r["buyer"], "title": r["title"], "value": r["value"],
-                           "sole_winner": bool(r["sole_winner"]), "n_winners": r["n_winners"],
-                           "is_suorahankinta": bool(r["is_suorahankinta"]),
-                           "year": (r["date_published"] or "")[:4]} for r in rows[:limit]],
+            "query": args.name, "org_ids": sorted(oids),
+            "as_winner": {"contract_count": len(won), "attributable_total": won_attr,
+                          "shared_win_count": won_shared, "contracts": ser(won, "buyer")},
+            "as_buyer": {"contract_count": len(bought), "attributable_total": buy_attr,
+                         "shared_count": buy_shared, "contracts": ser(bought, "winner_name")},
         }, ensure_ascii=False, indent=2, default=str))
         return
+
     print(f'Public procurement contracts (HILMA) — "{args.name}"\n')
-    print(f"  {len(rows)} wins | attributable (sole-winner) total: {fmt_money(attributable)} "
-          f"| +{shared} shared-win (value not attributable)\n")
-    print_table(["Year", "Value", "Sole", "Suora", "Buyer", "Title"], [
-        [(r["date_published"] or "-")[:4],
-         fmt_money(r["value"]) if (r["sole_winner"] and r["value"] and r["value"] <= _CONTRACT_VALUE_CAP) else "-",
-         "yes" if r["sole_winner"] else "no", "yes" if r["is_suorahankinta"] else "no",
-         textwrap.shorten(r["buyer"] or "-", 22, placeholder="..."),
-         textwrap.shorten(r["title"] or "-", 40, placeholder="...")]
-        for r in rows[:limit]
-    ])
-    if len(rows) > limit:
-        print(f"  ... ({len(rows) - limit} more; raise --limit)")
+
+    def render(label, rows, attr, shared, other_label, other_field):
+        if not rows:
+            return
+        print(f"  {label}: {len(rows)} sopimusta | attributable {fmt_money(attr)} "
+              f"| +{shared} jaettua (arvoa ei kohdisteta)")
+        print_table(["Year", "Value", "Sole", "Suora", other_label, "Title"], [
+            [(r["date_published"] or "-")[:4],
+             fmt_money(r["value"]) if (r["sole_winner"] and r["value"] and r["value"] <= _CONTRACT_VALUE_CAP) else "-",
+             "yes" if r["sole_winner"] else "no", "yes" if r["is_suorahankinta"] else "no",
+             textwrap.shorten((r["buyer"] if other_field == "buyer" else r["winner_name"]) or "-", 24, placeholder="..."),
+             textwrap.shorten(r["title"] or "-", 38, placeholder="...")]
+            for r in rows[:limit]])
+        if len(rows) > limit:
+            print(f"    ... ({len(rows) - limit} lisää; nosta --limit)")
+        print()
+
+    render("Voittajana (myynyt)", won, won_attr, won_shared, "Buyer", "buyer")
+    render("Ostajana (hankkinut)", bought, buy_attr, buy_shared, "Winner", "winner_name")
+    if not won and not bought:
+        print("  (ei hankintasopimuksia)")
 
 
 def cmd_lobbying(args, conn):
@@ -1998,7 +2018,7 @@ def cmd_lobbying(args, conn):
         print("  Party connections: (none)")
 
 
-RELEASE_URL = "https://github.com/ekipalen/ralssi/releases/download/v2.3/ralssi-data.zip"
+RELEASE_URL = "https://github.com/ekipalen/ralssi/releases/download/v2.4/ralssi-data.zip"
 
 
 def cmd_setup(args):

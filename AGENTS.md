@@ -142,13 +142,13 @@ uv run ralssi.py families "punainen risti" --json
 
 ### Julkiset hankinnat (HILMA)
 ```bash
-uv run ralssi.py contracts "Suomen Punainen Risti"   # Org:n voittamat hankintasopimukset
+uv run ralssi.py contracts "Suomen Punainen Risti"   # Org molemmissa rooleissa: voittajana + ostajana
 uv run ralssi.py contracts --top 20                  # Suurimmat hankintojen voittajat (kolmas sektori)
 uv run ralssi.py contracts --top --suorahankinta     # Vain kilpailuttamattomat suorahankinnat
 uv run ralssi.py contracts --buyer "Maahanmuutto"    # Mitä tilaaja (esim. Migri) on hankkinut ja keneltä
 uv run ralssi.py org "SPR" --contracts               # Liitä hankinnat org-näkymään
 ```
-HILMA-julkiset hankinnat ovat **eri rahavirta kuin avustukset** — älä laske niitä yhteen avustussummien kanssa. Euromäärä summataan VAIN yhden voittajan sopimuksista (`sole_winner=1`); monen voittajan sopimuksen arvoa ei voi kohdistaa yhdelle orgille, ne raportoidaan lukumääränä ("+N shared-win"). Kohdistus org_id:n kautta (sama kuin `org`).
+HILMA-julkiset hankinnat ovat **eri rahavirta kuin avustukset** — älä laske niitä yhteen avustussummien kanssa. Euromäärä summataan VAIN yhden voittajan sopimuksista (`sole_winner=1`); monen voittajan sopimuksen arvoa ei voi kohdistaa yhdelle orgille, ne raportoidaan lukumääränä ("+N jaettua"). Data sisältää sopimukset joissa oma org on **joko voittaja TAI ostaja** (`contracts <nimi>` näyttää molemmat roolit; `org_id`=voittaja, `buyer_org_id`=ostaja). 69 191 riviä, 31 081 voittaja-/38 110 ostaja-osumaa. Migri esim. ostajana 948 M€ (vastaanottokeskus-/terveyspalvelut).
 
 ### Lobbaus ja poliittiset kytkökset
 ```bash
@@ -314,7 +314,7 @@ Paras käyttö: `families`-komento (ks. yllä). SQL: `sql "SELECT label, member_
 > Huom: `org_families_cache` (57 riviä) on **vanha** temaattinen avainsana-välimuisti (nuoriso/vammais/…), ei liity emojärjestöihin. Älä sekoita näitä.
 
 ### org_public_contracts (HILMA-julkiset hankinnat)
-`id, org_id, y_tunnus, buyer, title, value, n_winners, sole_winner, procedure_type, is_suorahankinta, date_published, winner_name, sector` — 26 028 julkista hankintasopimusta jotka org on voittanut. **Eri rahavirta kuin avustukset** — älä summaa yhteen. `value` on luotettava vain kun `sole_winner=1`; monen voittajan sopimuksen arvoa ei voi kohdistaa yhdelle. Komento: `contracts`.
+`id, org_id, y_tunnus, notice_id, buyer, buyer_yt, buyer_org_id, title, value, n_winners, sole_winner, procedure_type, is_suorahankinta, date_published, winner_name, sector` — 69 191 julkista hankintasopimusta joissa oma org on **voittaja (`org_id`) tai ostaja (`buyer_org_id`)**. `org_id` voi olla NULL (voittaja datan ulkopuolelta, kun ostaja on omamme). **Eri rahavirta kuin avustukset** — älä summaa yhteen. `value` luotettava vain kun `sole_winner=1`. Komento: `contracts` (näyttää molemmat roolit), `contracts --buyer <tilaaja>`.
 
 ### lobbying_orgs / lobbying_topics / political_connections
 `lobbying_orgs` (1 264): rekisteröidyt lobbarit (`org_name, y_tunnus, sector, contact_count, topic_count, main_industry, total_grants_eur`). `lobbying_topics` (18 958): lobbausaiheet (`y_tunnus, org_name, topic_description, activity_type, activity_date`). `political_connections` (122): puoluekytkökset (`org_id, org_name, y_tunnus, party, connection_count, categories, total_grants_eur`). Komento: `lobbying`.
