@@ -1,6 +1,6 @@
 # Rälssi — julkisen rahoituksen tutkimustyökalu
 
-Tietokanta suomalaisesta julkisesta rahoituksesta. 7 datalähdettä, ~152 000 riviä, yhteensä ~43 mrd €. Tarkoitettu tutkivaan analyysiin: ketkä saavat rahaa, mistä lähteistä, ja kuinka paljon?
+Tietokanta suomalaisesta julkisesta rahoituksesta. 8 datalähdettä, ~208 000 riviä, yhteensä ~48 mrd €. Tarkoitettu tutkivaan analyysiin: ketkä saavat rahaa, mistä lähteistä, ja kuinka paljon?
 
 > **Suositus agenteille:** Käytä oletuksena `--third-sector`-lippua (oletus: päällä). Kolmanteen sektoriin rajattuna data on usein kiinnostavampaa ja datamäärä hallittavampaa. Poista suodatus `--no-third-sector`-lipulla vain kun käyttäjä nimenomaisesti pyytää yliopisto-, yritys- tai viranomaisdata.
 
@@ -9,6 +9,8 @@ Tietokanta suomalaisesta julkisesta rahoituksesta. 7 datalähdettä, ~152 000 ri
 Oletuksena PÄÄLLÄ kaikissa komennoissa (paitsi `sql`, `setup`, `sources`, `verify`). Suodattaa tuloksista pois organisaatiot joiden sector-sarake org_mapping-taulussa on: `company`, `government`, `university`, `research`, `international`.
 
 Jos sector on NULL, käytetään nimipohjaista heuristiikkaa: poissuljettavia nimiä ovat mm. Oy, Ab, Oyj, Ltd, Ky, tmi, kaupunki, stad, yliopisto, universitet, university, ammattikorkeakoulu, korkeakoulusäätiö.
+
+> **Ero verkkosivuun (avustusdata):** CLI käyttää **kieltolistaa** (poistaa yllä olevat sektorit, SÄILYTTÄÄ NULL/tuntemattomat nimiheuristiikalla). Verkkosivu käyttää **sallittulistaa** (näyttää VAIN sektorit `association`/`foundation`/`cooperative`/`church`). Siksi CLI:n kolmas-sektori-summa voi olla *suurempi* kuin sivuston samalle haulle (CLI pitää mukana sektoroimattomia orgeja). `contracts --top`- ja `lobbying --top` -rankingit käyttävät sivuston sallittulistaa (taulujen oma `sector`-sarake); `lobbying --party` näyttää kaikki kytketyt orgit sektorista riippumatta.
 
 ```bash
 uv run ralssi.py top eura -n 10                    # Vain kolmas sektori (oletus)
@@ -34,6 +36,8 @@ uv run ralssi.py org "Organisaation nimi"   # Organisaatiohaku kaikista lähteis
 uv run ralssi.py profile "Nimi"             # Vuosittainen rahoitusmatriisi
 uv run ralssi.py search "aihe"              # Tekstihaku kuvauksista ja nimistä
 uv run ralssi.py hunters                    # Monilähde-rahoituksen saajat
+uv run ralssi.py families                   # Emojärjestöt: koko liikkeen summat (keskus + paikallisyhdistykset)
+uv run ralssi.py contracts "Nimi"           # HILMA-julkiset hankinnat (eri rahavirta kuin avustukset)
 uv run ralssi.py sql "SELECT ..."           # Vapaa SQL mikä tahansa kysely
 ```
 
@@ -55,7 +59,8 @@ uv run ralssi.py verify "Kansanvalistusseura"  # 6. Varmista alkuperäislähteis
 
 | Lähde | Taulu | Rivejä | Kuvaus |
 |-------|-------|--------|--------|
-| STEA | `grants` | 26 487 | Järjestöavustukset (sis. hylätyt, myonnetty=0) |
+| STEA | `grants` | 26 487 | Järjestöavustukset 2017– (sis. hylätyt, myonnetty=0) |
+| RAY | `ray_grants` | 55 884 | Raha-automaattiyhdistys 2000–2016 (STEA:n edeltäjä) |
 | EURA | `eura_all` | 19 878 | EU-rakennerahastohankkeet 2014-2029 |
 | Business Finland | `bf_awarded` | 58 594 | Yritys- ja tutkimusrahoitus |
 | UM/IATI | `um_grants` | 23 301 | Kehitysyhteistyö (ulkoministeriö) |
@@ -63,7 +68,9 @@ uv run ralssi.py verify "Kansanvalistusseura"  # 6. Varmista alkuperäislähteis
 | VA | `va_grants` | 8 537 | Valtionavustukset (haeavustuksia.fi): OKM, Akatemia, TEM, STM, THL, UM, VNK, OM, YM, OPH |
 | FTS | `fts_grants` | 4 652 | EU Financial Transparency System (suorat EU-maksut) |
 
-Organisaatiot linkitetty ristiin `org_mapping`-taululla (~53 000 riviä, ~5 500 orgia 2+ lähteessä). Linkitys perustuu y-tunnukseen (luotettava) tai nimeen (riski väärille osumille).
+Organisaatiot linkitetty ristiin `org_mapping`-taululla (~59 000 riviä, ~6 650 orgia 2+ lähteessä, ~49 600 erillistä org_id:tä). Linkitys perustuu y-tunnukseen (luotettava) tai nimeen (riski väärille osumille).
+
+> **RAY-kausi on alaraja:** ~24 % RAY-euroista (n. 1,2 mrd €, 4 490 nimeä) on nimillä joilla ei ole y-tunnusta eikä linkitystä organisaatioon. Siksi mikä tahansa org-/perhe-summa joka sisältää RAY:n voi olla **alakanttiin** (ei koskaan yläkanttiin) esi-2017-vuosien osalta. `top ray`, `families` ym. tulostavat tästä muistutuksen.
 
 ## Komennot
 
@@ -113,16 +120,42 @@ Flags-sarakkeen selitykset:
 - `ngo+company` = saa sekä järjestörahoitusta (STEA) että yritysrahoitusta (BF)
 - `municipal+national` = saa sekä kunnallista (Helsinki) että valtakunnallista (STEA) rahoitusta
 
-Huom: `hunters` linkittää STEA/EURA/BF-datan suoraan y-tunnuksella ja lisää UM/Helsinki-datan org_mappingin kautta. Tämä eroaa `org`-komennosta joka käyttää pelkkää org_mappingia — `hunters` voi siksi löytää BF-linkityksiä joita `org` ei näe.
+Huom: `hunters` aggregoi **org_id-tasolla** ja summaa kaikki organisaation nimivariantit per lähde — sama logiikka kuin `org`/`profile`-komennoissa ja verkkosivulla. (`--verbose` vaikuttaa enää vain näkymään, ei lukuihin.) Summat täsmäävät siksi `org "Nimi" --merge` -tulokseen.
 
 ### Suurimmat saajat
 ```bash
-uv run ralssi.py top                  # Kaikki lähteet yhteensä
+uv run ralssi.py top                  # Kaikki lähteet yhteensä (org_id-tasolla)
 uv run ralssi.py top stea -n 10       # STEA top 10
 uv run ralssi.py top um               # UM top 20
 uv run ralssi.py top stea -n 10 --since 2020   # Aikarajaus
 uv run ralssi.py top eura --year 2023           # Yksittäinen vuosi
 ```
+`top` aggregoi org_id-tasolla: saman organisaation eri nimivariantit lasketaan yhteen (yksi rivi, kuten verkkosivun top-listoissa). Nimet joita ei ole org_mappingissa näkyvät omina riveinään. `top ray` ja `top` (kaikki) sisältävät RAY:n → alaraja-muistutus tulostuu.
+
+### Emojärjestöt (federoidut perheet)
+```bash
+uv run ralssi.py families                       # Listaa 20 perhettä, koko liikkeen summan mukaan
+uv run ralssi.py families omaishoitajaliitto    # Poraudu: jäsenkohtainen erittely + liikkeen summa
+uv run ralssi.py families "punainen risti" --json
+```
+**Tärkein työkalu kysymykseen "paljonko KOKO liike/järjestöperhe on saanut".** Monen järjestön raha hajautuu keskusjärjestön + kymmenien paikallisyhdistysten kesken, jolloin kokonaiskuvaa ei näe yksittäisellä `org`-haulla (esim. omaishoitajat: keskus 14 M€, mutta liike 90 M€ hajautuneena 34 yhdistykseen). `families`-lista näyttää `concentration`-kentän: **keskitetty** = raha keskusjärjestössä, **hajautunut** = jakautunut paikallisyhdistyksiin. `top_pct` = suurimman jäsenen osuus liikkeen summasta. Perheet on **verifioitu järjestöjen virallisilta jäsenlistoilta** (`verified_on`-päivä). Drill-tulos summaa kaikki jäsen-y-tunnusten grantit (sama aggregaatio kuin org-profiilissa); RAY-alaraja koskee perheitä jotka ulottuvat RAY-kaudelle.
+
+### Julkiset hankinnat (HILMA)
+```bash
+uv run ralssi.py contracts "Suomen Punainen Risti"   # Org:n voittamat hankintasopimukset
+uv run ralssi.py contracts --top 20                  # Suurimmat hankintojen voittajat (kolmas sektori)
+uv run ralssi.py contracts --top --suorahankinta     # Vain kilpailuttamattomat suorahankinnat
+uv run ralssi.py org "SPR" --contracts               # Liitä hankinnat org-näkymään
+```
+HILMA-julkiset hankinnat ovat **eri rahavirta kuin avustukset** — älä laske niitä yhteen avustussummien kanssa. Euromäärä summataan VAIN yhden voittajan sopimuksista (`sole_winner=1`); monen voittajan sopimuksen arvoa ei voi kohdistaa yhdelle orgille, ne raportoidaan lukumääränä ("+N shared-win"). Kohdistus org_id:n kautta (sama kuin `org`).
+
+### Lobbaus ja poliittiset kytkökset
+```bash
+uv run ralssi.py lobbying "Suomen Yrittäjät"    # Lobbarirekisteri + puoluekytkökset orgille
+uv run ralssi.py lobbying --top 20              # Aktiivisimmat lobbarit (aiheiden määrä)
+uv run ralssi.py lobbying --party KOK           # Puolueeseen kytketyt orgit
+```
+Lähteet: `lobbying_orgs` (rekisteri), `lobbying_topics` (lobbausaiheet), `political_connections` (puoluekytkökset: lahja/omistus/hallintotehtävä). Rekisteri painottuu yrityksiin/elinkeinojärjestöihin; useimmilla kolmannen sektorin orgeilla ei ole merkintöjä. Pienet taulut — myös `sql`-haut käyvät hyvin.
 
 
 ### Verifiointi alkuperäislähteistä
@@ -164,6 +197,7 @@ uv run ralssi.py vsearch --text "climate" --source stea # Tekstihaku → seed �
 | Lähde | Embeddings | Rivejä | Kattavuus | Huomio |
 |-------|-----------|--------|-----------|--------|
 | STEA | 26 472 | 26 487 | 99.9% | |
+| RAY | 34 276 | 55 884 | 61.3% | Mukana ristihaussa. Suora `vsearch <id>` RAY:lle vaatii `--source ray` (numero-ID menisi muuten STEA:ksi) |
 | UM | 23 301 | 23 301 | 100% | |
 | EURA | 19 878 | 19 878 | 100% | Vanhemmat hankkeet indeksoitu nimellä (ei tiivistelmää) |
 | VA | 8 537 | 8 537 | 100% | Valtionavustukset |
@@ -265,17 +299,26 @@ sqlite3 -json data/funding.db "SELECT * FROM org_mapping LIMIT 5"
 - 4 652 riviä, ~1,5 mrd €
 
 ### org_mapping (ristiin-linkitys)
-`org_id, source, source_name, y_tunnus, confidence`
-- source: stea, eura, um, bf, helsinki, va, fts
-- confidence: y_tunnus (luotettava), name_match (riski), high, new
+`org_id, source, source_name, y_tunnus, confidence, is_category, sector`
+- source: stea, ray, eura, um, bf, helsinki, va, fts
+- confidence: `high` (luotettava, valtaosa), `name` / `name_match` / `suffix_match` (nimipohjainen, riski väärille osumille), `new`
+- sector: company, government, university, research, international, association, foundation, cooperative, church tai NULL (käytetään kolmas-sektori-suodatukseen)
+- is_category: 1 = temaattinen kategoria, ei oikea org (jätetään pois org/hunters-aggregaateista)
 
-### org_families / org_families_cache (avainsanapohjaiset organisaatioryhmät)
-`org_families`: `id, keyword, label, description` — avainsanat joilla organisaatioita ryhmitellään (esim. "nuoriso", "vammais", "mielenterveys")
-`org_families_cache`: `family_id, label, description, keyword, member_count, source_count, total_eur, sample_members` — esikäsitelty yhteenveto jokaisesta ryhmästä
+### org_families / org_family_members (emojärjestöt = federoidut perheet)
+`org_families` (20 riviä): `id, keyword(slug), label, description, member_count, source_count, total_eur, top_pct, concentration, sample_members, source_url, verified_on` — **valtakunnalliset emojärjestöt** (keskusjärjestö + jäsenyhdistykset), esim. Suomen Punainen Risti, Omaishoitajaliitto, MIELI. EI temaattisia avainsanoja. `concentration` ∈ {`keskitetty`, `hajautunut`}, `top_pct` = suurimman jäsenen osuus liikkeen summasta. Jäsenyydet verifioitu virallisilta jäsenlistoilta (`verified_on`).
+`org_family_members` (279 riviä): `family_id, keyword, y_tunnus` — linkittää jäsenten y-tunnukset perheeseen.
 
-Käyttö: `sql "SELECT * FROM org_families_cache ORDER BY total_eur DESC LIMIT 10"` — näyttää suurimmat temaattiset organisaatioryhmät.
+Paras käyttö: `families`-komento (ks. yllä). SQL: `sql "SELECT label, member_count, total_eur, concentration FROM org_families ORDER BY total_eur DESC"`. Koko liikkeen summan saa joinaamalla `org_family_members.y_tunnus` → `org_mapping` → lähde-taulut.
+> Huom: `org_families_cache` (57 riviä) on **vanha** temaattinen avainsana-välimuisti (nuoriso/vammais/…), ei liity emojärjestöihin. Älä sekoita näitä.
 
-### enrichments / eura_enrichments / um_enrichments / va_enrichments
+### org_public_contracts (HILMA-julkiset hankinnat)
+`id, org_id, y_tunnus, buyer, title, value, n_winners, sole_winner, procedure_type, is_suorahankinta, date_published, winner_name, sector` — 26 028 julkista hankintasopimusta jotka org on voittanut. **Eri rahavirta kuin avustukset** — älä summaa yhteen. `value` on luotettava vain kun `sole_winner=1`; monen voittajan sopimuksen arvoa ei voi kohdistaa yhdelle. Komento: `contracts`.
+
+### lobbying_orgs / lobbying_topics / political_connections
+`lobbying_orgs` (1 264): rekisteröidyt lobbarit (`org_name, y_tunnus, sector, contact_count, topic_count, main_industry, total_grants_eur`). `lobbying_topics` (18 958): lobbausaiheet (`y_tunnus, org_name, topic_description, activity_type, activity_date`). `political_connections` (122): puoluekytkökset (`org_id, org_name, y_tunnus, party, connection_count, categories, total_grants_eur`). Komento: `lobbying`.
+
+### enrichments / eura_enrichments / um_enrichments / va_enrichments / ray_enrichments / fts_enrichments
 GPT-rikastukset: `oneliner, tags, concreteness (1-5), target_group, method`
 Ovat mallin tulkintoja, eivät faktatietoja. Concreteness on subjektiivinen.
 
@@ -308,7 +351,9 @@ Vertaa suoraan raakadatatiedostoihin: `data/eura_raw.xlsx`, `data/bf_awarded_raw
 
 3. **STEA sisältää hylätyt hakemukset:** myonnetty=0 rivit ovat tarkoituksellisesti mukana.
 
-4. **Concreteness-pisteet:** GPT:n subjektiivinen arvio, käytä suuntaa-antavana.
+4. **RAY-kausi (2000–2016) on alaraja:** ~24 % RAY-euroista on nimillä joilla ei ole y-tunnusta → linkittämättä organisaatioon. Org-/perhe-/hunters-summat jotka sisältävät RAY:n voivat olla **alakanttiin** (ei koskaan yläkanttiin). Älä esitä RAY:n sisältäviä esi-2017-summia täydellisinä.
+
+5. **Concreteness-pisteet:** GPT:n subjektiivinen arvio, käytä suuntaa-antavana.
 
 ## Tutkimuksen työnkulku
 
@@ -337,12 +382,18 @@ Kun haku osuu useaan org_id:hen (esim. "SASK" → SASK + SASKY), komento varoitt
 - "Ketkä saivat eniten STEA-rahaa vuonna 2023?" → `top stea --year 2023`
 - "Mitä ilmastohankkeita on rahoitettu 2020 jälkeen?" → `search "ilmasto" --since 2020`
 - "Näytä Pakolaisavun yksittäiset STEA-avustukset" → `org "Pakolaisapu" --detail --source stea`
+- "Paljonko KOKO liike/järjestöperhe (esim. omaishoitajat, MLL) on saanut?" → `families <nimi>` (keskus + paikallisyhdistykset yhteensä)
+- "Mitkä emojärjestöt jakavat rahan laajalle vs keskittävät sen?" → `families` (concentration: hajautunut vs keskitetty)
+- "Mitä julkisia hankintoja org X on voittanut?" → `contracts "X"` tai `org "X" --contracts`
+- "Ketkä kolmannen sektorin orgit voittavat eniten julkisia hankintoja?" → `contracts --top`
+- "Lobbaako org X / mihin puolueisiin se kytkeytyy?" → `lobbying "X"`, `lobbying --party KOK`
 
 ## Raakadatatiedostot
 
 | Lähde | Polku |
 |-------|-------|
 | STEA | `data/STEA-aineisto.xlsm` |
+| RAY | `data/RAY-aineisto.xlsx` |
 | EURA | `data/eura_raw.xlsx` |
 | BF (myönnetyt) | `data/bf_awarded_raw.xlsx` |
 | BF (maksetut) | `data/bf_paid_raw.xlsx` |

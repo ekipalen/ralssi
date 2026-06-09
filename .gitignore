@@ -4,6 +4,7 @@ data/funding.db-shm
 data/funding.db-wal
 data/funding.db.bak
 data/ralssi.db
+data/*.zip
 data/*.npy
 data/*embedding*.json
 data/iati/

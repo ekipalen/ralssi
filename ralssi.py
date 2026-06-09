@@ -311,9 +311,16 @@ def _detail_grants(source, rows, limit):
                 "nimi": r["nimi"] if "nimi" in r.keys() else None,
             })
         elif source == "bf":
+            # bf_awarded has no title; show the funding-type breakdown instead.
+            parts = []
+            for col, lbl in (("grants_eur", "grant"), ("loans_eur", "loan"),
+                             ("research_eur", "research"), ("eu_structural_eur", "eu")):
+                v = r[col] if col in r.keys() else None
+                if v:
+                    parts.append(f"{lbl} {fmt_money(v)}")
             details.append({
                 "year": r["year"], "amount": r["total_eur"],
-                "title": r["project_title"] if "project_title" in r.keys() else None,
+                "breakdown": ", ".join(parts) or None,
             })
         elif source == "um":
             details.append({
@@ -359,9 +366,9 @@ def _print_detail_table(source, details):
             for d in details
         ])
     elif source == "bf":
-        print_table(["Year", "Amount", "Title"], [
+        print_table(["Year", "Amount", "Breakdown"], [
             [str(d["year"] or "-"), fmt_money(d["amount"]),
-             textwrap.shorten(d["title"] or "-", 60, placeholder="...")]
+             textwrap.shorten(d["breakdown"] or "-", 60, placeholder="...")]
             for d in details
         ])
     elif source == "um":
@@ -475,14 +482,23 @@ def cmd_org(args, conn):
                 "sources": output, "combined_total": combined_total,
             })
 
+    # Optional public-contracts (HILMA) section — a separate money stream, kept out of the
+    # grant combined_total (grants and contract value are different money types).
+    contracts = None
+    if getattr(args, "contracts", False):
+        # Resolve org_ids fresh (independent of --merge, which collapses org_id to None).
+        contracts = _contracts_summary(conn, _contract_org_ids(conn, name))
+
     if args.json:
         if len(all_results) == 1:
             r = all_results[0]
-            print(json.dumps({"query": name, "org_id": r["org_id"], "match": r["match"],
-                               "sources": r["sources"], "combined_total": r["combined_total"]},
-                              ensure_ascii=False, indent=2))
+            out = {"query": name, "org_id": r["org_id"], "match": r["match"],
+                   "sources": r["sources"], "combined_total": r["combined_total"]}
         else:
-            print(json.dumps({"query": name, "results": all_results}, ensure_ascii=False, indent=2))
+            out = {"query": name, "results": all_results}
+        if contracts is not None:
+            out["contracts"] = contracts
+        print(json.dumps(out, ensure_ascii=False, indent=2))
         return
 
     for i, r in enumerate(all_results):
@@ -500,9 +516,19 @@ def cmd_org(args, conn):
                 if len(item["grants"]) == detail_limit:
                     print(f"    (limited to {detail_limit} grants, use --limit to show more)")
                 print()
-        print(f"  Combined total: {fmt_money(r['combined_total'])}")
+        print(f"  Combined grant total: {fmt_money(r['combined_total'])}")
         if i < len(all_results) - 1:
             print()
+
+    if contracts is not None:
+        c = contracts
+        print(f"\n  Public contracts (HILMA): {c['win_count']} wins | "
+              f"attributable {fmt_money(c['attributable_total'])} | "
+              f"+{c['shared_win_count']} shared-win (not attributable)")
+        for t in c["top"]:
+            label = f"{t['buyer'] or '-'} — {t['title'] or '-'}"
+            print(f"    {(t['year'] or '-'):4s} {fmt_money(t['value']):>14s}  "
+                  f"{textwrap.shorten(label, 58, placeholder='...')}")
 
 
 def _sources_with_ytunnus(conn):
@@ -536,6 +562,86 @@ def _aggregate_by_ytunnus(conn, src, since=None, until=None):
     ).fetchall()
 
 
+# RAY (2000-2016) is a known lower bound: ~24 % of RAY euros have no y_tunnus and are
+# unlinked, so any org/family total that includes RAY can UNDERcount (never overcount).
+RAY_LOWER_BOUND_NOTE = ("Note: total includes RAY (2000-2016); ~24 % of RAY euros are unlinked "
+                        "to an organisation, so RAY-era figures are a LOWER BOUND.")
+
+
+def _ray_caveat(sources, json_mode):
+    """Print the RAY lower-bound caveat (part of the answer) if 'ray' contributes to a total."""
+    if not json_mode and "ray" in sources:
+        print(f"  {RAY_LOWER_BOUND_NOTE}")
+
+
+def _org_id_aggregate(conn, sources=None, since=None, until=None):
+    """Aggregate grant money by org_id, summing ALL name variants per source.
+
+    This is the canonical org-level aggregation — identical semantics to the website's
+    org_id-based RPCs and to the `org`/`profile` commands (which sum every org_mapping
+    name variant for an org_id). Efficient: one GROUP BY per source plus an in-memory fold,
+    so it does not issue a query per organisation.
+
+    Returns {org_id: {"display": str, "y_tunnus": str|None, "sectors": set(str),
+                       "source_totals": {src: eur}, "total": eur}}.
+    Grant-table names with no org_mapping row are NOT attributed to any org_id (unmapped
+    orphans). Honors the year filter; does NOT apply the third-sector filter (caller decides).
+    """
+    srcs = [s for s in SOURCE_ORDER if (sources is None or s in sources)]
+    name_to_oid = {s: {} for s in srcs}          # src -> {source_name: org_id}
+    oid_names = {}                               # org_id -> set(display-candidate names)
+    oid_yt, oid_sectors = {}, {}
+    for row in conn.execute(
+        "SELECT org_id, source, source_name, y_tunnus, sector FROM org_mapping "
+        "WHERE COALESCE(is_category, 0) = 0"
+    ):
+        src = row["source"]
+        if src not in name_to_oid:
+            continue
+        oid = row["org_id"]
+        # Key by lower-cased name to mirror the website RPCs' LOWER(source_name)=LOWER(raw_name)
+        # join — grant-table casing can differ from org_mapping (esp. bf/um).
+        name_to_oid[src][(row["source_name"] or "").lower()] = oid
+        oid_names.setdefault(oid, set()).add(row["source_name"])
+        if row["y_tunnus"]:
+            oid_yt.setdefault(oid, row["y_tunnus"])
+        if row["sector"]:
+            oid_sectors.setdefault(oid, set()).add(row["sector"])
+
+    result = {}
+    for src in srcs:
+        s = SOURCES[src]
+        yr_clause, yr_params = _year_where(src, since, until)
+        where = f"WHERE {yr_clause}" if yr_clause else ""
+        for r in conn.execute(
+            f"SELECT {s['name']} as name, SUM({s['amount']}) as total "
+            f"FROM {s['table']} {where} GROUP BY {s['name']}", yr_params
+        ):
+            oid = name_to_oid[src].get((r["name"] or "").lower())
+            if oid is None:
+                continue
+            tot = r["total"] or 0
+            if tot == 0:
+                continue
+            e = result.setdefault(oid, {"display": None, "y_tunnus": oid_yt.get(oid),
+                                        "sectors": oid_sectors.get(oid, set()),
+                                        "source_totals": {}, "total": 0})
+            e["source_totals"][src] = e["source_totals"].get(src, 0) + tot
+            e["total"] += tot
+    for oid, e in result.items():
+        names = oid_names.get(oid)
+        e["display"] = min(names, key=len) if names else f"org_{oid}"
+    return result
+
+
+def _sectors_excluded(sectors):
+    """Mirror _third_sector_org_excluded using a pre-collected sector set.
+
+    True if every non-null sector is in EXCLUDED_SECTORS (all-NULL also counts as excluded,
+    matching _third_sector_org_excluded's behaviour)."""
+    return all(s in EXCLUDED_SECTORS for s in sectors if s)
+
+
 def cmd_hunters(args, conn):
     min_sources, limit, sort_by = args.min, args.limit, args.sort
     verbose = getattr(args, "verbose", False)
@@ -548,125 +654,33 @@ def cmd_hunters(args, conn):
             die(f"Unknown source(s): {', '.join(sorted(unknown))}. Use: {', '.join(SOURCES)}")
         args.min = min(args.min, len(source_filter))
         min_sources = args.min
-    orgs = {}
-
-    ytunnus_all = _sources_with_ytunnus(conn)
-    ytunnus_sources = (ytunnus_all & source_filter) if source_filter else set(ytunnus_all)
-    for src in ytunnus_sources:
-        for row in _aggregate_by_ytunnus(conn, src, since=since, until=until):
-            yt = row["y_tunnus"]
-            total = row["total"] or 0
-            if total <= 0:
-                continue
-            orgs.setdefault(yt, {"names": set(), "sources": set(), "total": 0, "source_totals": {}})
-            orgs[yt]["names"].add(row["org_name"])
-            orgs[yt]["sources"].add(src)
-            orgs[yt]["total"] += total
-            orgs[yt]["source_totals"][src] = orgs[yt]["source_totals"].get(src, 0) + total
-
-    mapping_by_oid = {}
-    # Sources without a y_tunnus column are matched via org_mapping (org_id) instead.
-    mapping_sources = set(SOURCES) - ytunnus_all
-    if source_filter:
-        mapping_sources = mapping_sources & source_filter
-    if mapping_sources or verbose:
-        for row in conn.execute("SELECT org_id, source, source_name, y_tunnus FROM org_mapping WHERE COALESCE(is_category, 0) = 0"):
-            mapping_by_oid.setdefault(row["org_id"], []).append(row)
-
-    if mapping_sources:
-        for oid, entries in mapping_by_oid.items():
-            src_set = set(e["source"] for e in entries)
-            if not (src_set & mapping_sources):
-                continue
-            yt = next((e["y_tunnus"] for e in entries if e["y_tunnus"]), None)
-            key = yt if yt and yt in orgs else (yt or f"_org_{oid}")
-            entry = orgs.setdefault(key, {"names": set(), "sources": set(), "total": 0, "source_totals": {}})
-            for e in entries:
-                entry["names"].add(e["source_name"])
-
-            for check_src in sorted(mapping_sources):
-                if check_src not in src_set:
-                    continue
-                if source_filter and check_src not in source_filter:
-                    continue
-                cs = SOURCES[check_src]
-                tbl_amount, tbl_name, tbl_table = cs["amount"], cs["name"], cs["table"]
-                names = [e["source_name"] for e in entries if e["source"] == check_src]
-                ph = ",".join("?" for _ in names)
-                yr_clause, yr_params = _year_where(check_src, since, until)
-                where = f"{tbl_name} IN ({ph})"
-                if yr_clause:
-                    where += f" AND {yr_clause}"
-                t = conn.execute(f"SELECT SUM({tbl_amount}) FROM {tbl_table} WHERE {where}", names + yr_params).fetchone()[0]
-                if t:
-                    entry["sources"].add(check_src)
-                    entry["total"] += t
-                    entry["source_totals"][check_src] = entry["source_totals"].get(check_src, 0) + t
-
-    # In verbose mode, also pull in org_mapping-only overlaps
-    if verbose:
-        for oid, entries in mapping_by_oid.items():
-            src_set = set(e["source"] for e in entries)
-            if len(src_set) < 2:
-                continue
-            yt = next((e["y_tunnus"] for e in entries if e["y_tunnus"]), None)
-            key = yt if yt and yt in orgs else (yt or f"_org_{oid}")
-            entry = orgs.setdefault(key, {"names": set(), "sources": set(), "total": 0, "source_totals": {}})
-            for e in entries:
-                entry["names"].add(e["source_name"])
-            by_source = {}
-            for e in entries:
-                by_source.setdefault(e["source"], set()).add(e["source_name"])
-            for src, names in by_source.items():
-                if src in entry["source_totals"]:
-                    continue
-                rows = query_source(conn, src, names)
-                if rows:
-                    t = sum(r[SOURCES[src]["amount"]] or 0 for r in rows)
-                    if t:
-                        entry["sources"].add(src)
-                        entry["total"] += t
-                        entry["source_totals"][src] = t
-
-    # Build sector lookup for third-sector filtering
-    if third_sector:
-        _sector_by_ytunnus = {}
-        for row in conn.execute("SELECT DISTINCT y_tunnus, sector FROM org_mapping WHERE y_tunnus IS NOT NULL AND y_tunnus != ''"):
-            _sector_by_ytunnus.setdefault(row["y_tunnus"], set()).add(row["sector"])
+    # Canonical aggregation: by org_id, summing ALL name variants per source (same semantics
+    # as the website's org_id RPCs and the org/profile commands). This replaces the older
+    # y_tunnus-keyed path that silently dropped grants filed under a blank/NULL y_tunnus and
+    # whose default vs --verbose totals disagreed. Now --verbose only changes the display.
+    agg = _org_id_aggregate(conn, sources=source_filter, since=since, until=until)
 
     results = []
-    for key, d in orgs.items():
-        if source_filter and not (d["sources"] >= source_filter):
+    for oid, d in agg.items():
+        srcs = set(d["source_totals"].keys())
+        # When a source filter is set, require the org to appear in ALL named sources.
+        if source_filter and not (srcs >= source_filter):
             continue
-        if len(d["sources"]) < min_sources:
+        if len(srcs) < min_sources:
             continue
-        # Third-sector filter
-        if third_sector:
-            excluded = False
-            if key.startswith("_org_"):
-                oid = int(key[5:])
-                excluded = _third_sector_org_excluded(conn, oid)
-            elif key in _sector_by_ytunnus:
-                sectors = _sector_by_ytunnus[key]
-                excluded = all(s in EXCLUDED_SECTORS for s in sectors if s)
-            else:
-                # Fallback: name heuristic
-                name = sorted(d["names"])[0] if d["names"] else key
-                excluded = _is_non_third_sector_name(name)
-            if excluded:
-                continue
+        if third_sector and _sectors_excluded(d["sectors"]):
+            continue
         flags = []
-        s = d["sources"]
-        if "stea" in s and "bf" in s:
+        if "stea" in srcs and "bf" in srcs:
             flags.append("ngo+company")
-        if "um" in s and (s & {"stea", "helsinki"}):
+        if "um" in srcs and (srcs & {"stea", "helsinki"}):
             flags.append("dev+domestic")
-        if "helsinki" in s and "stea" in s:
+        if "helsinki" in srcs and "stea" in srcs:
             flags.append("municipal+national")
         results.append({
-            "name": sorted(d["names"])[0] if d["names"] else key,
-            "y_tunnus": key if not key.startswith("_org_") else "-",
-            "sources": sorted(d["sources"]), "source_count": len(d["sources"]),
+            "name": d["display"],
+            "y_tunnus": d["y_tunnus"] or "-",
+            "sources": sorted(srcs), "source_count": len(srcs),
             "total": d["total"], "flags": flags,
             "source_totals": d["source_totals"],
         })
@@ -722,29 +736,48 @@ def cmd_top(args, conn):
             die(f"Unknown source: {source}. Use: {', '.join(SOURCES)}")
         s = SOURCES[source]
         yr_clause, yr_params = _year_where(source, since, until)
-        ts_clause, ts_params = _third_sector_sql_for_source(source, third_sector)
-        where_parts = []
-        params = []
-        if yr_clause:
-            where_parts.append(yr_clause)
-            params.extend(yr_params)
-        if ts_clause:
-            where_parts.append(ts_clause)
-            params.extend(ts_params)
-        where = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
-        # Fetch more than n to account for heuristic filtering on NULLs
-        fetch_limit = n * 5 if third_sector else n
-        rows = conn.execute(
+        where = f"WHERE {yr_clause}" if yr_clause else ""
+        # org_mapping lookup for this source: fold name variants of one org into a single
+        # org_id bucket (so an org split across spellings ranks as one row, matching the
+        # website's get_*_top). Names absent from org_mapping stay as their own entry so no
+        # recipient is dropped.
+        # Lower-cased keys mirror the website RPCs' LOWER() join (grant casing can differ from org_mapping).
+        name_to_oid, sector_by_name = {}, {}
+        for r in conn.execute(
+            "SELECT source_name, org_id, sector FROM org_mapping WHERE source = ? AND COALESCE(is_category,0)=0",
+            [source],
+        ):
+            name_to_oid[(r["source_name"] or "").lower()] = r["org_id"]
+            if r["sector"]:
+                sector_by_name.setdefault((r["source_name"] or "").lower(), set()).add(r["sector"])
+        buckets = {}
+        for r in conn.execute(
             f"SELECT {s['name']} as name, SUM({s['amount']}) as total, COUNT(*) as cnt "
-            f"FROM {s['table']} {where} GROUP BY {s['name']} ORDER BY total DESC LIMIT ?",
-            params + [fetch_limit],
-        ).fetchall()
-        # Apply name heuristic for NULLs not in org_mapping
+            f"FROM {s['table']} {where} GROUP BY {s['name']}", yr_params,
+        ):
+            nm = r["name"]
+            if not nm or nm.strip() in ("", "-"):   # skip placeholder/empty recipient names
+                continue
+            nl = nm.lower()
+            oid = name_to_oid.get(nl)
+            key = ("oid", oid) if oid is not None else ("name", nm)
+            b = buckets.setdefault(key, {"name": nm, "_top": -1, "total": 0, "cnt": 0, "sectors": set()})
+            b["total"] += r["total"] or 0
+            b["cnt"] += r["cnt"]
+            b["sectors"].update(sector_by_name.get(nl, set()))
+            if (r["total"] or 0) > b["_top"]:          # display = the largest-contributing variant
+                b["_top"], b["name"] = (r["total"] or 0), nm
+        rows = list(buckets.values())
         if third_sector:
-            rows = [r for r in rows if not _is_non_third_sector_name(r["name"])]
+            def _keep(b):
+                if b["sectors"]:
+                    return not _sectors_excluded(b["sectors"])
+                return not _is_non_third_sector_name(b["name"])   # unmapped name -> heuristic
+            rows = [b for b in rows if _keep(b)]
+        rows.sort(key=lambda b: -b["total"])
         rows = rows[:n]
         if args.json:
-            print(json.dumps([{"name": r["name"], "total": r["total"], "grants": r["cnt"]} for r in rows],
+            print(json.dumps([{"name": b["name"], "total": b["total"], "grants": b["cnt"]} for b in rows],
                               ensure_ascii=False, indent=2))
             return
         title = f"Top {n} recipients — {source.upper()}"
@@ -754,39 +787,24 @@ def cmd_top(args, conn):
             title += " [third-sector]"
         print(f"{title}\n")
         print_table(["#", "Name", "Total", "Grants"], [
-            [str(i), textwrap.shorten(r["name"] or "-", 50, placeholder="..."),
-             fmt_money(r["total"]), str(r["cnt"])]
-            for i, r in enumerate(rows, 1)
+            [str(i), textwrap.shorten(b["name"] or "-", 50, placeholder="..."),
+             fmt_money(b["total"]), str(b["cnt"])]
+            for i, b in enumerate(rows, 1)
         ])
+        _ray_caveat({source}, args.json)
     else:
-        combined = {}
-        for src, s in SOURCES.items():
-            yr_clause, yr_params = _year_where(src, since, until)
-            ts_clause, ts_params = _third_sector_sql_for_source(src, third_sector)
-            where_parts = []
-            params = []
-            if yr_clause:
-                where_parts.append(yr_clause)
-                params.extend(yr_params)
-            if ts_clause:
-                where_parts.append(ts_clause)
-                params.extend(ts_params)
-            where = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
-            for row in conn.execute(
-                f"SELECT {s['name']} as name, SUM({s['amount']}) as total FROM {s['table']} {where} GROUP BY {s['name']}",
-                params,
-            ):
-                key = (row["name"] or "").strip().upper()
-                if key:
-                    if third_sector and _is_non_third_sector_name(row["name"]):
-                        continue
-                    combined.setdefault(key, {"name": row["name"], "total": 0})
-                    combined[key]["total"] += row["total"] or 0
-        top = sorted(combined.values(), key=lambda x: -x["total"])[:n]
+        # Accurate cross-source ranking: aggregate by org_id, summing every name variant
+        # across all sources (no longer the old name-string approximation).
+        agg = _org_id_aggregate(conn, since=since, until=until)
+        rows = [{"name": d["display"], "total": d["total"]}
+                for d in agg.values()
+                if not (third_sector and _sectors_excluded(d["sectors"]))]
+        rows.sort(key=lambda x: -x["total"])
+        rows = rows[:n]
         if args.json:
-            print(json.dumps(top, ensure_ascii=False, indent=2))
+            print(json.dumps(rows, ensure_ascii=False, indent=2))
             return
-        title = f"Top {n} recipients — all sources (approximate, name-based)"
+        title = f"Top {n} recipients — all sources (by org_id)"
         if yr_label:
             title += f" ({yr_label})"
         if third_sector:
@@ -794,8 +812,9 @@ def cmd_top(args, conn):
         print(f"{title}\n")
         print_table(["#", "Name", "Total"], [
             [str(i), textwrap.shorten(r["name"] or "-", 55, placeholder="..."), fmt_money(r["total"])]
-            for i, r in enumerate(top, 1)
+            for i, r in enumerate(rows, 1)
         ])
+        _ray_caveat(set(SOURCE_ORDER), args.json)
 
 
 
@@ -1053,16 +1072,20 @@ def cmd_vsearch(args, conn):
         if not best_match:
             die(f'No grants matching "{text_term}" found in indexed sources')
         text_src, item_id = best_match[0], str(best_match[1])
+        seed_src = text_src   # the seed's real source; digit ids (RAY/VA/FTS) must NOT default to STEA
         if not args.json:
             print(f'--text "{text_term}" -> seed: [{text_src.upper()}] {item_id} ({best_match[3]})\n')
     elif args.item_id:
         item_id = args.item_id
+        seed_src = None
     else:
         die("Either item_id or --text is required")
 
-    # Auto-detect source from ID format (--source overrides)
+    # Auto-detect source: --source wins, then a --text seed's known source, then id-format guess.
     if args.source and args.source in emb_files:
         query_source_key = args.source
+    elif seed_src:
+        query_source_key = seed_src
     elif item_id.isdigit():
         query_source_key = "stea"
     elif item_id[:1].upper() in ("S", "A", "J"):
@@ -1596,7 +1619,346 @@ def cmd_sql(args, conn):
     print_table(headers, [[str(v) if v is not None else "NULL" for v in list(r)] for r in rows])
 
 
-RELEASE_URL = "https://github.com/ekipalen/ralssi/releases/download/v2.2/ralssi-data.zip"
+# Sectors the website's third-sector ALLOWLIST keeps (vs the CLI's wider denylist). Used by
+# the contracts/lobbying commands, whose tables carry a denormalised `sector` column and
+# whose website views filter to this allowlist.
+THIRD_SECTOR_ALLOWLIST = ("association", "foundation", "cooperative", "church")
+
+# Public-contract value is populated ONLY for sole-winner awards; a shared-win contract's
+# value is not attributable to one org. A few corrupt rows have absurd values -> cap.
+_CONTRACT_VALUE_CAP = 1e9
+
+
+def _contracts_summary(conn, oids, top_n=5):
+    """Summarise HILMA public-contract wins for a set of org_ids. Attributable euros count
+    sole-winner contracts only (capped); shared wins are returned as a count. Grants and
+    contract value are DIFFERENT money types and are never added together."""
+    if not oids:
+        return {"win_count": 0, "attributable_total": 0, "shared_win_count": 0, "top": []}
+    ph = ",".join("?" for _ in oids)
+    rows = conn.execute(
+        f"SELECT buyer, title, value, sole_winner, is_suorahankinta, date_published "
+        f"FROM org_public_contracts WHERE org_id IN ({ph})", list(oids)
+    ).fetchall()
+    sole = [r for r in rows if r["sole_winner"] and r["value"] and 0 <= r["value"] <= _CONTRACT_VALUE_CAP]
+    sole.sort(key=lambda r: -(r["value"] or 0))
+    return {
+        "win_count": len(rows),
+        "attributable_total": sum(r["value"] for r in sole),
+        "shared_win_count": sum(1 for r in rows if not r["sole_winner"]),
+        "top": [{"buyer": r["buyer"], "title": r["title"], "value": r["value"],
+                 "year": (r["date_published"] or "")[:4]} for r in sole[:top_n]],
+    }
+
+
+def cmd_families(args, conn):
+    """Federated org families (emojärjestöt): keskusjärjestö + member associations.
+
+    LIST mode (no arg) ranks the 20 curated families by whole-movement total. DRILL mode
+    (a keyword or name) breaks a family down by member org and gives the movement total —
+    the canonical way to see funding for movements whose money is spread across dozens of
+    local associations (e.g. omaishoitajat)."""
+    name = getattr(args, "name", None)
+
+    if not name:
+        rows = conn.execute(
+            "SELECT keyword, label, member_count, source_count, total_eur, top_pct, concentration "
+            "FROM org_families ORDER BY total_eur DESC"
+        ).fetchall()
+        if args.json:
+            print(json.dumps([dict(r) for r in rows], ensure_ascii=False, indent=2, default=str))
+            return
+        print("Federated families (emojärjestöt) — whole-movement totals\n")
+        print_table(["#", "Family", "Members", "Srcs", "Total", "Top%", "Concentration"], [
+            [str(i), textwrap.shorten(r["label"], 36, placeholder="..."), str(r["member_count"]),
+             str(r["source_count"]), fmt_money(r["total_eur"]),
+             f'{r["top_pct"]:.0f}' if r["top_pct"] is not None else "-", r["concentration"] or "-"]
+            for i, r in enumerate(rows, 1)
+        ])
+        print(f"\n  {len(rows)} families.  Drill in:  ralssi.py families <keyword|name>")
+        print("  Concentration: keskitetty = money concentrated in the central org; "
+              "hajautunut = spread across local associations.")
+        return
+
+    fam = conn.execute(
+        "SELECT * FROM org_families WHERE keyword = ? OR LOWER(label) LIKE LOWER(?) "
+        "ORDER BY total_eur DESC LIMIT 1", [name, f"%{name}%"]
+    ).fetchone()
+    if not fam:
+        if args.json:
+            print(json.dumps({"error": f"No family matching '{name}'", "query": name}, ensure_ascii=False))
+            return
+        die(f'No family matching "{name}". List all families: ralssi.py families')
+    keyword = fam["keyword"]
+    member_yts = [r["y_tunnus"] for r in conn.execute(
+        "SELECT y_tunnus FROM org_family_members WHERE keyword = ?", [keyword])]
+
+    yt_to_oids = {}
+    if member_yts:
+        ph = ",".join("?" for _ in member_yts)
+        for r in conn.execute(
+            f"SELECT DISTINCT y_tunnus, org_id FROM org_mapping "
+            f"WHERE y_tunnus IN ({ph}) AND COALESCE(is_category, 0) = 0", member_yts
+        ):
+            yt_to_oids.setdefault(r["y_tunnus"], set()).add(r["org_id"])
+
+    agg = _org_id_aggregate(conn)   # org_id -> all-source totals (sums all name variants)
+    members, contributing = [], set()
+    for yt in member_yts:
+        total, srcs, disp, best = 0, set(), None, -1
+        for oid in yt_to_oids.get(yt, set()):
+            d = agg.get(oid)
+            if not d:
+                continue
+            total += d["total"]
+            srcs |= set(d["source_totals"])
+            if d["total"] > best:
+                best, disp = d["total"], d["display"]
+        contributing |= srcs
+        members.append({"y_tunnus": yt, "name": disp or yt, "total": total, "sources": sorted(srcs)})
+    members.sort(key=lambda m: -m["total"])
+    movement_total = sum(m["total"] for m in members)
+
+    if args.json:
+        print(json.dumps({
+            "keyword": keyword, "label": fam["label"], "description": fam["description"],
+            "concentration": fam["concentration"], "top_pct": fam["top_pct"],
+            "movement_total": movement_total, "member_count": len(members),
+            "sources": sorted(contributing), "source_url": fam["source_url"],
+            "verified_on": fam["verified_on"], "members": members,
+        }, ensure_ascii=False, indent=2, default=str))
+        return
+
+    top_pct = fam["top_pct"]
+    head = f'Family: {fam["label"]}'
+    if fam["concentration"]:
+        head += f'  ({fam["concentration"]}'
+        head += f' — top org = {top_pct:.0f}% of movement)' if top_pct is not None else ')'
+    print(head + "\n")
+    print(f'  {len(members)} members across {len(contributing)} sources.  '
+          f'Movement total: {fmt_money(movement_total)}')
+    if fam["verified_on"]:
+        print(f'  Members verified from official member lists / websites on {fam["verified_on"]}.')
+    _ray_caveat(contributing, False)
+    print()
+    limit = getattr(args, "limit", None)
+    shown = members[:limit] if limit else members
+    print_table(["Member", "Y-tunnus", "Total", "Sources"], [
+        [textwrap.shorten(m["name"] or "-", 44, placeholder="..."), m["y_tunnus"] or "-",
+         fmt_money(m["total"]), ",".join(m["sources"])]
+        for m in shown
+    ])
+    if limit and len(members) > limit:
+        print(f"  ... ({len(members) - limit} more members; raise --limit to show)")
+
+
+def _contract_org_ids(conn, name):
+    """Resolve a name to the set of org_ids (third-sector-aware via resolve_org)."""
+    oids = set()
+    for g in resolve_org(conn, name):
+        if g["org_id"] is not None:
+            oids.add(g["org_id"])
+    return oids
+
+
+def cmd_contracts(args, conn):
+    """Public procurement wins (HILMA, org_public_contracts) — a money stream separate from
+    grants. Euro totals count ONLY sole-winner awards (a shared-win contract's value is not
+    attributable to one org); shared wins are reported as a count."""
+    third_sector = args.third_sector
+
+    if args.top is not None:
+        n = args.top or 20
+        where, params = ["1=1"], []
+        if args.suorahankinta:
+            where.append("is_suorahankinta = 1")
+        if third_sector:
+            ph = ",".join("?" for _ in THIRD_SECTOR_ALLOWLIST)
+            where.append(f"sector IN ({ph})")
+            params += list(THIRD_SECTOR_ALLOWLIST)
+        wsql = " AND ".join(where)
+        rows = conn.execute(
+            f"SELECT org_id, MAX(winner_name) as name, "
+            f"SUM(CASE WHEN sole_winner = 1 AND value BETWEEN 0 AND {_CONTRACT_VALUE_CAP} THEN value ELSE 0 END) as attributable, "
+            f"COUNT(*) as n, SUM(CASE WHEN sole_winner = 1 THEN 1 ELSE 0 END) as sole_n "
+            f"FROM org_public_contracts WHERE {wsql} AND org_id IS NOT NULL "
+            f"GROUP BY org_id ORDER BY attributable DESC LIMIT ?", params + [n]
+        ).fetchall()
+        if args.json:
+            print(json.dumps([{"name": r["name"], "attributable_value": r["attributable"],
+                               "contracts": r["n"], "sole_winner_contracts": r["sole_n"]}
+                              for r in rows], ensure_ascii=False, indent=2))
+            return
+        title = "Top public-contract winners (HILMA)"
+        if args.suorahankinta:
+            title += " — direct awards (suorahankinta)"
+        if third_sector:
+            title += " [third-sector]"
+        print(title + "\n")
+        print_table(["#", "Org", "Contracts", "Attributable value"], [
+            [str(i), textwrap.shorten(r["name"] or "-", 45, placeholder="..."),
+             str(r["n"]), fmt_money(r["attributable"])]
+            for i, r in enumerate(rows, 1)
+        ])
+        print("\n  'Attributable value' sums sole-winner contracts only; shared-win contract "
+              "value is not attributable to one org.")
+        return
+
+    if not args.name:
+        die("Usage: contracts <org-name>  |  contracts --top [N]")
+    oids = _contract_org_ids(conn, args.name)
+    if not oids:
+        die(f'No mapped org_id for "{args.name}" (contracts are keyed by org_id; try the exact name).')
+    ph = ",".join("?" for _ in oids)
+    rows = conn.execute(
+        f"SELECT winner_name, buyer, title, value, sole_winner, n_winners, is_suorahankinta, "
+        f"procedure_type, date_published, sector FROM org_public_contracts "
+        f"WHERE org_id IN ({ph}) ORDER BY is_suorahankinta DESC, "
+        f"(CASE WHEN sole_winner = 1 THEN value ELSE 0 END) DESC", list(oids)
+    ).fetchall()
+    attributable = sum(r["value"] for r in rows
+                       if r["sole_winner"] and r["value"] and 0 <= r["value"] <= _CONTRACT_VALUE_CAP)
+    shared = sum(1 for r in rows if not r["sole_winner"])
+    limit = getattr(args, "limit", None) or 50
+    if args.json:
+        print(json.dumps({
+            "query": args.name, "org_ids": sorted(oids), "win_count": len(rows),
+            "attributable_total": attributable, "shared_win_count": shared,
+            "contracts": [{"buyer": r["buyer"], "title": r["title"], "value": r["value"],
+                           "sole_winner": bool(r["sole_winner"]), "n_winners": r["n_winners"],
+                           "is_suorahankinta": bool(r["is_suorahankinta"]),
+                           "year": (r["date_published"] or "")[:4]} for r in rows[:limit]],
+        }, ensure_ascii=False, indent=2, default=str))
+        return
+    print(f'Public procurement contracts (HILMA) — "{args.name}"\n')
+    print(f"  {len(rows)} wins | attributable (sole-winner) total: {fmt_money(attributable)} "
+          f"| +{shared} shared-win (value not attributable)\n")
+    print_table(["Year", "Value", "Sole", "Suora", "Buyer", "Title"], [
+        [(r["date_published"] or "-")[:4],
+         fmt_money(r["value"]) if (r["sole_winner"] and r["value"] and r["value"] <= _CONTRACT_VALUE_CAP) else "-",
+         "yes" if r["sole_winner"] else "no", "yes" if r["is_suorahankinta"] else "no",
+         textwrap.shorten(r["buyer"] or "-", 22, placeholder="..."),
+         textwrap.shorten(r["title"] or "-", 40, placeholder="...")]
+        for r in rows[:limit]
+    ])
+    if len(rows) > limit:
+        print(f"  ... ({len(rows) - limit} more; raise --limit)")
+
+
+def cmd_lobbying(args, conn):
+    """Lobbying register (lobbying_orgs/lobbying_topics) and political party ties
+    (political_connections). Note: the registry skews to companies/industry bodies; most
+    third-sector orgs have no entries."""
+    third_sector = args.third_sector
+    allow = THIRD_SECTOR_ALLOWLIST
+
+    if args.party:
+        rows = conn.execute(
+            "SELECT org_name, connection_count, categories, sector, total_grants_eur "
+            "FROM political_connections WHERE UPPER(party) = UPPER(?) ORDER BY connection_count DESC",
+            [args.party]
+        ).fetchall()
+        if args.json:
+            print(json.dumps([{"org": r["org_name"], "connections": r["connection_count"],
+                               "categories": r["categories"], "sector": r["sector"],
+                               "grants_eur": r["total_grants_eur"]} for r in rows],
+                             ensure_ascii=False, indent=2, default=str))
+            return
+        print(f"Orgs connected to {args.party.upper()} (political_connections)\n")
+        print_table(["Org", "Conns", "Sector", "Categories"], [
+            [textwrap.shorten(r["org_name"] or "-", 40, placeholder="..."),
+             str(r["connection_count"]), r["sector"] or "-",
+             textwrap.shorten((r["categories"] or "").strip("[]").replace('"', ""), 30, placeholder="...")]
+            for r in rows
+        ])
+        return
+
+    if args.top is not None:
+        n = args.top or 20
+        where, params = ["1=1"], []
+        if third_sector:
+            ph = ",".join("?" for _ in allow)
+            where.append(f"sector IN ({ph})")
+            params += list(allow)
+        rows = conn.execute(
+            f"SELECT org_name, sector, topic_count, contact_count, total_grants_eur "
+            f"FROM lobbying_orgs WHERE {' AND '.join(where)} ORDER BY topic_count DESC LIMIT ?",
+            params + [n]
+        ).fetchall()
+        if args.json:
+            print(json.dumps([dict(r) for r in rows], ensure_ascii=False, indent=2, default=str))
+            return
+        title = "Most active lobbyists (by registered topics)"
+        if third_sector:
+            title += " [third-sector]"
+        print(title + "\n")
+        print_table(["#", "Org", "Topics", "Contacts", "Grants"], [
+            [str(i), textwrap.shorten(r["org_name"] or "-", 40, placeholder="..."),
+             str(r["topic_count"]), str(r["contact_count"]), fmt_money(r["total_grants_eur"])]
+            for i, r in enumerate(rows, 1)
+        ])
+        return
+
+    if not args.name:
+        die("Usage: lobbying <org-name>  |  lobbying --top [N]  |  lobbying --party <KOK|SDP|...>")
+    # Resolve to y_tunnus + org_id set.
+    oids = _contract_org_ids(conn, args.name)
+    yts = set()
+    if oids:
+        ph = ",".join("?" for _ in oids)
+        for r in conn.execute(
+            f"SELECT DISTINCT y_tunnus FROM org_mapping WHERE org_id IN ({ph}) AND y_tunnus IS NOT NULL AND y_tunnus != ''",
+            list(oids)):
+            yts.add(r["y_tunnus"])
+    lob = None
+    if oids:
+        ph = ",".join("?" for _ in oids)
+        lob = conn.execute(
+            f"SELECT org_name, main_industry, contact_count, topic_count, total_grants_eur "
+            f"FROM lobbying_orgs WHERE org_id IN ({ph}) LIMIT 1", list(oids)).fetchone()
+    topics, conns = [], []
+    if yts:
+        ph = ",".join("?" for _ in yts)
+        topics = conn.execute(
+            f"SELECT DISTINCT topic_description, activity_type, activity_date FROM lobbying_topics "
+            f"WHERE y_tunnus IN ({ph}) ORDER BY activity_date DESC LIMIT ?", list(yts) + [getattr(args, "limit", None) or 10]
+        ).fetchall()
+        conns = conn.execute(
+            f"SELECT party, connection_count, categories FROM political_connections "
+            f"WHERE y_tunnus IN ({ph}) ORDER BY connection_count DESC", list(yts)).fetchall()
+    if args.json:
+        print(json.dumps({
+            "query": args.name,
+            "lobbying": (dict(lob) if lob else None),
+            "recent_topics": [{"date": t["activity_date"], "type": t["activity_type"],
+                               "topic": t["topic_description"]} for t in topics],
+            "party_connections": [{"party": c["party"], "connections": c["connection_count"],
+                                   "categories": c["categories"]} for c in conns],
+        }, ensure_ascii=False, indent=2, default=str))
+        return
+    print(f'Lobbying & political ties — "{args.name}"\n')
+    if lob:
+        print(f"  Registry: {lob['topic_count']} topics, {lob['contact_count']} contacts.  "
+              f"Main industry: {lob['main_industry'] or '-'}")
+        if lob["total_grants_eur"]:
+            print(f"  Grants (precomputed): {fmt_money(lob['total_grants_eur'])}")
+    else:
+        print("  Not in the lobbying register.")
+    if topics:
+        print("  Recent lobbying topics:")
+        for t in topics:
+            print(f"    {(t['activity_date'] or '-'):12s} {(t['activity_type'] or '-'):8s} "
+                  f"{textwrap.shorten(t['topic_description'] or '-', 70, placeholder='...')}")
+    if conns:
+        print("  Party connections:")
+        for c in conns:
+            print(f"    {c['party']:6s} {c['connection_count']} "
+                  f"({(c['categories'] or '').strip('[]').replace(chr(34), '')})")
+    elif lob or topics:
+        print("  Party connections: (none)")
+
+
+RELEASE_URL = "https://github.com/ekipalen/ralssi/releases/download/v2.3/ralssi-data.zip"
 
 
 def cmd_setup(args):
@@ -1667,6 +2029,7 @@ def main():
     p.add_argument("--detail", action="store_true", help="Show individual grants instead of just summary")
     p.add_argument("--source", choices=list(SOURCES.keys()), help="Limit detail to one source")
     p.add_argument("--limit", type=int, default=50, help="Max grants per source in detail view (default: 50)")
+    p.add_argument("--contracts", action="store_true", help="Also show HILMA public-procurement wins (separate from grants)")
 
     p = _json(sub.add_parser("hunters", help="Find orgs in multiple sources"))
     p.add_argument("--min", type=int, default=2, help="Min sources (default: 2)")
@@ -1708,6 +2071,24 @@ def main():
     p.add_argument("name", help="Organisation name (partial match)")
     p.add_argument("--merge", action="store_true", help="Merge all matching org groups")
 
+    p = _json(sub.add_parser("families", help="Federated org families (emojärjestöt): movement-wide totals"))
+    p.add_argument("name", nargs="?", help="Family keyword or name to drill into (omit to list all)")
+    p.add_argument("--limit", type=int, default=None, help="Max members shown in drill-down")
+
+    p = _json(sub.add_parser("contracts", help="HILMA public-procurement wins for an org / top winners"))
+    p.add_argument("name", nargs="?", help="Organisation name (omit and use --top for a ranking)")
+    p.add_argument("--top", nargs="?", type=int, const=20, default=None, metavar="N",
+                   help="Rank top contract winners (default 20)")
+    p.add_argument("--suorahankinta", action="store_true", help="With --top: only no-competition direct awards")
+    p.add_argument("--limit", type=int, default=50, help="Max contracts shown in org mode (default: 50)")
+
+    p = _json(sub.add_parser("lobbying", help="Lobbying register + political party ties for an org"))
+    p.add_argument("name", nargs="?", help="Organisation name")
+    p.add_argument("--top", nargs="?", type=int, const=20, default=None, metavar="N",
+                   help="Rank most active lobbyists by registered topics (default 20)")
+    p.add_argument("--party", help="List orgs connected to a party (KOK/SDP/VIHR/KESK/PS/RKP/VAS/KD)")
+    p.add_argument("--limit", type=int, default=10, help="Max lobbying topics shown in org mode (default: 10)")
+
     p = sub.add_parser("setup", help="Download data files from GitHub release")
     p.add_argument("--force", action="store_true", help="Re-download even if data exists")
 
@@ -1732,6 +2113,7 @@ def main():
         "verify": cmd_verify, "sources": cmd_sources,
         "clusters": cmd_clusters, "vsearch": cmd_vsearch,
         "search": cmd_search, "profile": cmd_profile, "sql": cmd_sql,
+        "families": cmd_families, "contracts": cmd_contracts, "lobbying": cmd_lobbying,
     }
     try:
         commands[args.command](args, conn)

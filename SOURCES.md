@@ -12,6 +12,16 @@
 - **Sarakkeet:** jarjesto, y_tunnus, vuosi, kayttotarkoitus, avustuslaji, alue, avustuskokonaisuus, jarjestoluokka, haettu, ehdotettu, myonnetty
 - **Huom:** Sisältää myös hylätyt hakemukset (myonnetty=0). Tämä on tarkoituksellista.
 
+## RAY (Raha-automaattiyhdistys)
+
+- **Raakadata:** `data/RAY-aineisto.xlsx`
+- **Tietokantataulu:** `ray_grants` (55 884 riviä, ~4,97 mrd €), `ray_enrichments` (GPT-rikastus)
+- **Lähde:** STEA:n `downloadRay`-endpoint (RAY oli STEA:n edeltäjä; avustustoiminta siirtyi STEA:lle 2017)
+- **Vuodet:** 2000-2016
+- **Verifiointi:** Vertaa raaka-xlsx-tiedostoon
+- **Sarakkeet:** jarjesto, y_tunnus, vuosi, kayttotarkoitus, avustuslaji, alue, jarjestoluokka, alaryhma, toimintoluokka, haettu, myonnetty, yt_source
+- **KRIITTINEN — alaraja-varaus:** ~24 % RAY:n euroista on kirjattu nimillä joilla EI ole y-tunnusta, eivätkä ne ole linkittyneet mihinkään organisaatioon. Siksi mikä tahansa organisaatio- tai perhetason summa joka sisältää RAY-dataa on **alaraja** (aliarvioi, ei koskaan yliarvioi). `yt_source` kertoo y-tunnuksen alkuperän (local-name / prh-name-search / agent-candidate / NULL).
+
 ## EURA (EU-rakennerahastot)
 
 - **Raakadata:** `data/eura_raw.xlsx`
@@ -20,7 +30,7 @@
   - EURA 2014-2020: `https://www.eura2014.fi/rrtiepa/projekti.php?projektikoodi={hankekoodi}`
   - EURA 2021-2027: `https://www.eura2021.fi/hakutulokset/projektikortti?id={hankekoodi}`
   - Molemmat vaativat selainta (ei curl-yhteensopiva)
-- **Sarakkeet:** hankekoodi, ohjelmakausi, rahasto, nimi, toteuttaja, y_tunnus, viranomainen, tila, aloituspvm, paattymispvm, myonnetty_eu_valtio, toteutunut_eu_valtio, tiivistelma, sijainti
+- **Sarakkeet:** hankekoodi, ohjelmakausi, rahasto, nimi, toteuttaja, y_tunnus, viranomainen, tila, aloituspvm, paattymispvm, myonnetty_eu_valtio, toteutunut_eu_valtio, tiivistelma, sijainti (NUTS-aluekoodi, esim. "FI193 Keski-Suomi"; täytetty ~41 % riveistä)
 
 ## UM / IATI (Ulkoministeriön kehitysyhteistyö)
 
@@ -64,7 +74,7 @@
   - Myöntäjät: Suomen Akatemia, TEM, UM, OKM, OPH, STM, THL, VNK, OM, YM
   - OPH: vain ry/rf/sr/säätiö (ei kuntia/oppilaitoksia)
   - BF/STEA-myöntäjät pudotettu duplikaatteina (sama data jo kannassa)
-- **Sarakkeet:** id, organisation, y_tunnus, grantor, decision_date, year, applied_eur, granted_eur, eu_funds_eur, purpose, call_name, regions
+- **Sarakkeet:** id, organisation, y_tunnus, grantor, decision_date, year, applied_eur, granted_eur, eu_eur, purpose, call_name, region, case_number
 - **Huom:** Hylätyt päätökset (`data/okm/Kielteiset päätökset.xlsx`, 55 432 riviä) säilytetty referenssiksi mutta eivät tietokannassa.
 
 ## FTS (EU Financial Transparency System)
@@ -78,17 +88,33 @@
 
 ## org_mapping (ristiin-linkitys)
 
-- **Tietokantataulu:** `org_mapping` (~53 000 riviä)
-- **Linkitysmenetelmät:**
-  - `y_tunnus` (cross-source matchia) — luotettava
-  - `name_match` (cross-source matchia) — riski väärälle osumalle
+- **Tietokantataulu:** `org_mapping` (58 972 riviä, ~49 552 eri org_id:tä)
+- **Sarakkeet:** org_id, source, source_name, y_tunnus, confidence, is_category, sector
+- **Linkityksen luottamustasot (`confidence`):**
+  - `high` — alkuperäinen lähde / luotettava (y-tunnus-osuma)
+  - `name` — nimipohjainen linkki
+  - `name_match` — cross-source nimimatchia, riski väärälle osumalle
+  - `suffix_match` — suffiksipohjainen nimimatchia
   - `new` — ei cross-source linkkiä
-  - `high` — alkuperäinen lähde
-- **~5 500 organisaatiota** esiintyy 2+ lähteessä
+- **`sector`:** organisaation sektoriluokitus, arvojoukko {company, government, university, research, international, association, foundation, cooperative, church, NULL}
+- **`is_category`:** lippu kategoria-/kokoomariville (ei yksittäinen organisaatio)
+- **~6 650 organisaatiota** esiintyy 2+ lähteessä
 - **Korjattu 19.5.2026:** Vihreä Keidas ry/säätiö -väärä linkki, Helsingin yliopisto/ylioppilaskunta -sekaannus, Tampere poistettu
 - **Tunnetut jäljellä olevat ongelmat:**
   - UM-nimivariantit: ~57 organisaatioparia joissa sama org esiintyy eri IATI ref-numerolla eri vuosina (esim. Kirkon Ulkomaanapu: ref 22000-3, 22000-456, 22000-528). Näitä EI yhdistetä automaattisesti koska riski väärille yhdistämisille. Tarkista manuaalisesti kun tulos on kiinnostava.
   - African Care ry kahdessa org_id:ssä (3958 + 4106)
+
+## org_families (emojärjestöt) ja analyysitaulut
+
+- **Tietokantataulu:** `org_families` (20 federoitua "emojärjestö"-perhettä)
+  - Nimettyjä perheitä: keskusjärjestö + sen jäsenyhdistykset
+  - **Sarakkeet:** id, keyword, label, description, member_count, source_count, total_eur, top_pct, concentration, sample_members, source_url, verified_on
+- **Tietokantataulu:** `org_family_members` (perheiden jäsenten avaimet)
+  - **Sarakkeet:** family_id, keyword, y_tunnus
+- **Muut analyysitaulut:**
+  - `org_public_contracts` — HILMA-hankintavoitot (26 028 riviä)
+  - `lobbying_orgs` / `lobbying_topics` — lobbausrekisteri (1 264 / 18 958 riviä)
+  - `political_connections` — poliittiset kytkökset (122 riviä)
 
 ## Rikastukset (GPT)
 

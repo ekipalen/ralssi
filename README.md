@@ -1,7 +1,7 @@
 # Rälssi — Finnish Public Funding Explorer
 
-A single-file CLI tool that brings together seven Finnish public funding databases
-into one searchable view. 152K grant rows totaling 43 billion euros — from STEA
+A single-file CLI tool that brings together eight Finnish public funding databases
+into one searchable view. 208K grant rows totaling 48 billion euros — from STEA
 grants to EU structural funds to state grants and development cooperation — all
 cross-referenced by organization.
 
@@ -66,13 +66,16 @@ numpy (vector similarity search) is installed automatically by `uv run` via PEP 
 
 | Source | Rows | Total | Description |
 |--------|------|-------|-------------|
-| STEA | 26,487 | 3.2B | Järjestöavustukset (incl. rejected applications) |
+| STEA | 26,487 | 3.48B | Järjestöavustukset (incl. rejected applications) |
+| RAY | 55,884 | 5.0B | Raha-automaattiyhdistys grants 2000–2016 (predecessor to STEA) |
 | EURA | 19,878 | 4.3B | EU structural funds 2014–2029 |
 | BF | 58,594 | 11.5B | Business Finland research and innovation funding |
 | UM/IATI | 23,301 | 18.3B | Development cooperation |
 | Helsinki | 11,037 | 366M | Municipal grants |
 | VA | 8,537 | 3.7B | Valtionavustukset — OKM, Akatemia, TEM, STM, THL, UM, VNK, OM, YM, OPH |
 | FTS | 4,652 | 1.5B | EU Financial Transparency System — direct EU payments to Finnish organisations |
+
+Note: RAY (2000–2016) per-organisation totals are a lower bound, as ~24% of RAY euros are not yet linked to an organisation.
 
 ## Quick start
 
@@ -106,8 +109,11 @@ a name-based heuristic is applied (e.g., names containing Oy, Ab, kaupunki, ylio
 
 | Command | Description |
 |---------|-------------|
-| `org <name>` | Cross-source org search (`--merge`, `--detail`, `--source`) |
+| `org <name>` | Cross-source org search (`--merge`, `--detail`, `--source`, `--contracts` adds a public-contracts section) |
 | `profile <name>` | Year x source funding matrix (`--merge` to combine groups) |
+| `families [name]` | Federated org families (emojärjestöt): list, or drill into one family for its movement-wide total across all member associations |
+| `contracts <name>` | HILMA public-procurement wins for an org (`--top` for top winners) |
+| `lobbying <name>` | Lobbying-register activity + political party ties for an org (`--top`, `--party`) |
 | `search <term>` | Fulltext search across all sources (`--source`, `--since/--until`) |
 | `hunters` | Find orgs in multiple sources (`--sources`, `--since/--until`, `-v` for details) |
 | `top [source]` | Biggest recipients (`--since/--until`, `--year`) |
@@ -134,11 +140,16 @@ queries, and cross-reference data across sources.
 
 ## Database schema
 
-The database contains source-specific tables (`grants`, `eura_all`, `bf_awarded`,
+The database contains source-specific tables (`grants`, `ray_grants`, `eura_all`, `bf_awarded`,
 `um_grants`, `helsinki_grants`, `va_grants`, `fts_grants`) plus an `org_mapping` table that links
-the same organization across sources via `org_id`. The `org_families` and
-`org_families_cache` tables provide keyword-based org groupings (e.g. "youth",
-"disability") for thematic analysis across sources. Use `sql "SELECT name, sql FROM sqlite_master WHERE type='table'"` or inspect
+the same organization across sources via `org_id`. The `org_families` table holds 20 federated
+"emojärjestöt" — named org families (e.g. Suomen Punainen Risti, Omaishoitajaliitto), each a
+central organisation plus its member associations, with `member_count`, `source_count`,
+`total_eur`, `top_pct`, and `concentration` columns; `org_family_members` links member
+y-tunnukset to a family. The legacy keyword-based grouping now lives in a separate
+`org_families_cache`. Additional tables include `org_public_contracts` (HILMA
+public-procurement wins, 26,028 rows), `lobbying_orgs` / `lobbying_topics` (lobbying-register
+activity), and `political_connections`. Use `sql "SELECT name, sql FROM sqlite_master WHERE type='table'"` or inspect
 `SOURCES.md` for full details.
 
 ## License
