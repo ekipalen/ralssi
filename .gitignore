@@ -1,4 +1,5 @@
 __pycache__/
+/funding.db
 data/funding.db
 data/funding.db-shm
 data/funding.db-wal
