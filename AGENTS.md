@@ -1,6 +1,6 @@
 # Rälssi — julkisen rahoituksen tutkimustyökalu
 
-Tietokanta suomalaisesta julkisesta rahoituksesta. 8 datalähdettä, ~208 000 riviä, yhteensä ~48 mrd €. Tarkoitettu tutkivaan analyysiin: ketkä saavat rahaa, mistä lähteistä, ja kuinka paljon?
+Tietokanta suomalaisesta julkisesta rahoituksesta. 8 datalähdettä, ~209 000 riviä, yhteensä ~49 mrd € (päivitetty 25.9.2026). Tarkoitettu tutkivaan analyysiin: ketkä saavat rahaa, mistä lähteistä, ja kuinka paljon?
 
 > **Suositus agenteille:** Käytä oletuksena `--third-sector`-lippua (oletus: päällä). Kolmanteen sektoriin rajattuna data on usein kiinnostavampaa ja datamäärä hallittavampaa. Poista suodatus `--no-third-sector`-lipulla vain kun käyttäjä nimenomaisesti pyytää yliopisto-, yritys- tai viranomaisdata.
 
@@ -62,13 +62,13 @@ uv run ralssi.py verify "Kansanvalistusseura"  # 6. Varmista alkuperäislähteis
 | STEA | `grants` | 26 487 | Järjestöavustukset 2017– (sis. hylätyt, myonnetty=0) |
 | RAY | `ray_grants` | 55 884 | Raha-automaattiyhdistys 2000–2016 (STEA:n edeltäjä) |
 | EURA | `eura_all` | 19 878 | EU-rakennerahastohankkeet 2014-2029 |
-| Business Finland | `bf_awarded` | 58 594 | Yritys- ja tutkimusrahoitus |
+| Business Finland | `bf_awarded` | 58 935 | Yritys- ja tutkimusrahoitus |
 | UM/IATI | `um_grants` | 23 301 | Kehitysyhteistyö (ulkoministeriö) |
 | Helsinki | `helsinki_grants` | 11 037 | Kaupungin avustukset |
 | VA | `va_grants` | 8 537 | Valtionavustukset (haeavustuksia.fi): OKM, Akatemia, TEM, STM, THL, UM, VNK, OM, YM, OPH |
-| FTS | `fts_grants` | 4 652 | EU Financial Transparency System (suorat EU-maksut) |
+| FTS | `fts_grants` | 5 091 | EU Financial Transparency System (suorat EU-maksut) |
 
-Organisaatiot linkitetty ristiin `org_mapping`-taululla (~59 000 riviä, ~6 650 orgia 2+ lähteessä, ~49 600 erillistä org_id:tä). Linkitys perustuu y-tunnukseen (luotettava) tai nimeen (riski väärille osumille).
+Organisaatiot linkitetty ristiin `org_mapping`-taululla (~59 100 riviä, ~6 670 orgia 2+ lähteessä, ~49 700 erillistä org_id:tä). Linkitys perustuu y-tunnukseen (luotettava) tai nimeen (riski väärille osumille).
 
 > **RAY-kausi on alaraja:** ~24 % RAY-euroista (n. 1,2 mrd €, 4 490 nimeä) on nimillä joilla ei ole y-tunnusta eikä linkitystä organisaatioon. Siksi mikä tahansa org-/perhe-summa joka sisältää RAY:n voi olla **alakanttiin** (ei koskaan yläkanttiin) esi-2017-vuosien osalta. `top ray`, `families` ym. tulostavat tästä muistutuksen.
 
@@ -148,7 +148,7 @@ uv run ralssi.py contracts --top --suorahankinta     # Vain kilpailuttamattomat 
 uv run ralssi.py contracts --buyer "Maahanmuutto"    # Mitä tilaaja (esim. Migri) on hankkinut ja keneltä
 uv run ralssi.py org "SPR" --contracts               # Liitä hankinnat org-näkymään
 ```
-HILMA-julkiset hankinnat ovat **eri rahavirta kuin avustukset** — älä laske niitä yhteen avustussummien kanssa. Euromäärä summataan VAIN yhden voittajan sopimuksista (`sole_winner=1`); monen voittajan sopimuksen arvoa ei voi kohdistaa yhdelle orgille, ne raportoidaan lukumääränä ("+N jaettua"). Data sisältää sopimukset joissa oma org on **joko voittaja TAI ostaja** (`contracts <nimi>` näyttää molemmat roolit; `org_id`=voittaja, `buyer_org_id`=ostaja). 69 191 riviä, 31 081 voittaja-/38 110 ostaja-osumaa. Migri esim. ostajana 948 M€ (vastaanottokeskus-/terveyspalvelut).
+HILMA-julkiset hankinnat ovat **eri rahavirta kuin avustukset** — älä laske niitä yhteen avustussummien kanssa. Euromäärä summataan VAIN yhden voittajan sopimuksista (`sole_winner=1`); monen voittajan sopimuksen arvoa ei voi kohdistaa yhdelle orgille, ne raportoidaan lukumääränä ("+N jaettua"). Data sisältää sopimukset joissa oma org on **joko voittaja TAI ostaja** (`contracts <nimi>` näyttää molemmat roolit; `org_id`=voittaja, `buyer_org_id`=ostaja). 73 302 riviä, 32 981 voittaja-/40 321 ostaja-osumaa (julkaistu 9/2026 asti). Migri esim. ostajana 950 M€ (vastaanottokeskus-/terveyspalvelut).
 
 ### Lobbaus ja poliittiset kytkökset
 ```bash
@@ -202,8 +202,8 @@ uv run ralssi.py vsearch --text "climate" --source stea # Tekstihaku → seed �
 | UM | 23 301 | 23 301 | 100% | |
 | EURA | 19 878 | 19 878 | 100% | Vanhemmat hankkeet indeksoitu nimellä (ei tiivistelmää) |
 | VA | 8 537 | 8 537 | 100% | Valtionavustukset |
-| FTS | 1 850 | 4 652 | 39.8% | EU Financial Transparency System |
-| BF | 0 | 58 594 | 0% | Yritys/innovaatiorahoitus, ei sovellu semanttiseen hakuun |
+| FTS | 1 850 | 5 091 | 36.3% | EU Financial Transparency System |
+| BF | 0 | 58 935 | 0% | Yritys/innovaatiorahoitus, ei sovellu semanttiseen hakuun |
 | Helsinki | 0 | 11 037 | 0% | |
 
 Jos vsearch antaa virheen tunnetulla ID:llä, kyseiselle riville ei ole embeddingiä.
@@ -297,7 +297,7 @@ sqlite3 -json data/funding.db "SELECT * FROM org_mapping LIMIT 5"
 ### fts_grants (EU Financial Transparency System)
 `id, year, programme, organisation, vat_number, y_tunnus, amount, is_ngo, is_nfpo, responsible_department, expense_type, beneficiary_type`
 - Lähde: ec.europa.eu/budget/fts — suorat EU-maksut suomalaisille organisaatioille
-- 4 652 riviä, ~1,5 mrd €
+- 5 091 riviä, ~1,75 mrd € (2007–2025)
 
 ### org_mapping (ristiin-linkitys)
 `org_id, source, source_name, y_tunnus, confidence, is_category, sector`
@@ -314,10 +314,10 @@ Paras käyttö: `families`-komento (ks. yllä). SQL: `sql "SELECT label, member_
 > Huom: `org_families_cache` (57 riviä) on **vanha** temaattinen avainsana-välimuisti (nuoriso/vammais/…), ei liity emojärjestöihin. Älä sekoita näitä.
 
 ### org_public_contracts (HILMA-julkiset hankinnat)
-`id, org_id, y_tunnus, notice_id, buyer, buyer_yt, buyer_org_id, title, value, n_winners, sole_winner, procedure_type, is_suorahankinta, date_published, winner_name, sector` — 69 191 julkista hankintasopimusta joissa oma org on **voittaja (`org_id`) tai ostaja (`buyer_org_id`)**. `org_id` voi olla NULL (voittaja datan ulkopuolelta, kun ostaja on omamme). **Eri rahavirta kuin avustukset** — älä summaa yhteen. `value` luotettava vain kun `sole_winner=1`. Komento: `contracts` (näyttää molemmat roolit), `contracts --buyer <tilaaja>`.
+`id, org_id, y_tunnus, notice_id, buyer, buyer_yt, buyer_org_id, title, value, n_winners, sole_winner, procedure_type, is_suorahankinta, date_published, winner_name, sector` — 73 302 julkista hankintasopimusta joissa oma org on **voittaja (`org_id`) tai ostaja (`buyer_org_id`)**. `org_id` voi olla NULL (voittaja datan ulkopuolelta, kun ostaja on omamme). **Eri rahavirta kuin avustukset** — älä summaa yhteen. `value` luotettava vain kun `sole_winner=1`. Komento: `contracts` (näyttää molemmat roolit), `contracts --buyer <tilaaja>`.
 
 ### lobbying_orgs / lobbying_topics / political_connections
-`lobbying_orgs` (1 264): rekisteröidyt lobbarit (`org_name, y_tunnus, sector, contact_count, topic_count, main_industry, total_grants_eur`). `lobbying_topics` (18 958): lobbausaiheet (`y_tunnus, org_name, topic_description, activity_type, activity_date`). `political_connections` (122): puoluekytkökset (`org_id, org_name, y_tunnus, party, connection_count, categories, total_grants_eur`). Komento: `lobbying`.
+`lobbying_orgs` (1 354): rekisteröidyt lobbarit (`org_name, y_tunnus, sector, contact_count, topic_count, main_industry, total_grants_eur`). `lobbying_topics` (26 376): lobbausaiheet (`y_tunnus, org_name, topic_description, activity_type, activity_date`). `political_connections` (122): puoluekytkökset (`org_id, org_name, y_tunnus, party, connection_count, categories, total_grants_eur`). Komento: `lobbying`.
 
 ### enrichments / eura_enrichments / um_enrichments / va_enrichments / ray_enrichments / fts_enrichments
 GPT-rikastukset: `oneliner, tags, concreteness (1-5), target_group, method`

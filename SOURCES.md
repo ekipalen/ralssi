@@ -47,7 +47,7 @@
 ## Business Finland
 
 - **Raakadata:** `data/bf_awarded_raw.xlsx` + `data/bf_paid_raw.xlsx`
-- **Tietokantataulu:** `bf_awarded` (58 594 riviä)
+- **Tietokantataulu:** `bf_awarded` (58 935 riviä, 2010–2026)
 - **Lähde:** Business Finland avoin data
 - **Verifiointi:** Ei tunnettua API:a. Vertaa raaka-xlsx-tiedostoihin.
 - **Sarakkeet:** organisation, y_tunnus, year, grants_eur, loans_eur, eu_structural_eur, research_eur, total_eur
@@ -80,7 +80,7 @@
 ## FTS (EU Financial Transparency System)
 
 - **Raakadata:** `data/fts/` (API/CSV-export)
-- **Tietokantataulu:** `fts_grants` (4 652 riviä)
+- **Tietokantataulu:** `fts_grants` (5 091 riviä, 2007–2025)
 - **Lähde:** https://ec.europa.eu/budget/fts — EU:n suorat maksut suomalaisille organisaatioille
 - **Verifiointi:** Hae suoraan FTS-verkkosivulta organisaation nimellä tai VAT-numerolla
 - **Sarakkeet:** id, year, programme, organisation, vat_number, y_tunnus, amount, is_ngo, is_nfpo, responsible_department, expense_type, beneficiary_type
@@ -88,7 +88,7 @@
 
 ## org_mapping (ristiin-linkitys)
 
-- **Tietokantataulu:** `org_mapping` (58 972 riviä, ~49 552 eri org_id:tä)
+- **Tietokantataulu:** `org_mapping` (59 146 riviä, ~49 686 eri org_id:tä)
 - **Sarakkeet:** org_id, source, source_name, y_tunnus, confidence, is_category, sector
 - **Linkityksen luottamustasot (`confidence`):**
   - `high` — alkuperäinen lähde / luotettava (y-tunnus-osuma)
@@ -112,8 +112,8 @@
 - **Tietokantataulu:** `org_family_members` (perheiden jäsenten avaimet)
   - **Sarakkeet:** family_id, keyword, y_tunnus
 - **Muut analyysitaulut:**
-  - `org_public_contracts` — HILMA-hankintavoitot (26 028 riviä)
-  - `lobbying_orgs` / `lobbying_topics` — lobbausrekisteri (1 264 / 18 958 riviä)
+  - `org_public_contracts` — HILMA-hankinnat, voittaja- ja ostajapuoli (73 302 riviä, julkaistu 9/2026 asti)
+  - `lobbying_orgs` / `lobbying_topics` — lobbausrekisteri (1 354 / 26 376 riviä)
   - `political_connections` — poliittiset kytkökset (122 riviä)
 
 ## Rikastukset (GPT)

@@ -2018,7 +2018,7 @@ def cmd_lobbying(args, conn):
         print("  Party connections: (none)")
 
 
-RELEASE_URL = "https://github.com/ekipalen/ralssi/releases/download/v2.4/ralssi-data.zip"
+RELEASE_URL = "https://github.com/ekipalen/ralssi/releases/download/v2.5/ralssi-data.zip"
 
 
 def cmd_setup(args):
