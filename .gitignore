@@ -14,3 +14,10 @@ data/*.xlsm
 data/helsinki/
 data/okm/
 data/funding.db.bak-*
+
+# Päivitysajojen staging-data (raakatiedostot, hakuskriptit — HILMA-skriptissä rajapinta-avain)
+data/staging/
+# Kannan varmuuskopiot ja SQLite-sivutiedostot
+data/funding.db.*
+data/*.db-wal
+data/*.db-shm

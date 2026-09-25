@@ -145,3 +145,35 @@ grep -A10 "Organisaation nimi" data/iati/Finland_total_2020.xml
 # VA: vertaa raaka-xlsx tai hae haeavustuksia.fi
 # data/okm/Myönteiset päätökset.xlsx
 ```
+
+## Päivitysajo 25.9.2026 — mitä opittiin
+
+Päivitetty: FTS (+2025), Business Finland (+2026), HILMA (6–9/2026), avoimuusrekisteri.
+Tarkistettu, ei uutta: STEA, UM/IATI, Helsinki. **Ei saatu:** VA ja EURA 2021–2027.
+Raportit ja hakuskriptit: `data/staging/<lähde>/REPORT.md` (gitignoressa — HILMA-skriptissä
+on rajapinta-avain).
+
+- **VA ja EURA 2021–2027 ovat Power BI -upotuksia.** Curl ei riitä, eikä headless-Chromium
+  saanut vientiä toimimaan (EURA: vientinappi ei reagoi; VA: data tulee Power BI:n
+  pakatussa DSR-muodossa). **Nopein reitti: lataa Excel käsin oikealla selaimella** ja
+  vertaa `data/staging/va/baseline_from_raw.csv`:tä vasten. EURA:ssa oli 25.9. 8 733 hanketta,
+  kannassa 8 091.
+- **EURA 2014–2020 -palvelin (eura2014.fi) hylkää yhteydet Pi:ltä** (connection refused
+  porttiin 443). Kausi on päättynyt, joten tämä ei ole kiireellinen.
+- **Business Finland ei ole xlsx vaan Qlik-dashboard** (`tietopankki.businessfinland.fi`);
+  haku Playwrightilla, ks. `data/staging/bf/`. `bf_awarded` vastaa *myönnettyä* rahoitusta,
+  ei `bf_paid_raw.xlsx`:ää.
+- **Avoimuusrekisterin koko-endpoint `/open-data-activity-notification` antaa HTTP 500**
+  (liian iso). Käytä kausikohtaista `/term/{id}`-endpointia. Alkuperäinen tuonti otti vain
+  yhden aiheen per ilmoitus — 2 585 vanhaa aihetta lisättiin jälkikäteen.
+- **Supabase-synkka: `scripts/sync_tables_to_supabase.py`.** Kuivaharjoitus oletuksena,
+  `--apply` korvaa taulut yhdessä transaktiossa ja ajaa `refresh_org_families_stats()`.
+  Ota ensin varmuuskopio (`avustusdata/scripts/backup-supabase.sh`).
+- **Supabasen euro-sarakkeet olivat `real`-tyyppiä** (~7 merkitsevää numeroa → 48 656 807 €
+  tallentui 48 656 800 €:ksi, BF:ssä yhteensä 1,2 M€ virhettä). Korjattu 25.9.2026
+  `double precision`:ksi 13 sarakkeessa; synkkaskripti korjaa jatkossa automaattisesti.
+- **`bf_grants.id` = SQLiten rowid**, ja sivuston suosikit tallentavat avustukset muodossa
+  `BF-<id>`. Synkka säilyttää id:t — älä lataa bf_grantsia uudelleen niin että id:t vaihtuvat.
+- **`lobbying_orgs.total_grants_eur`:n alkuperäistä laskentakaavaa ei ole toistettavissa**
+  (`fix-lobbying-grants.py` antaa tutkimusraskaille orgeille selvästi pienempiä summia). Siksi
+  vain uusien orgien summat laskettiin; vanhoja ei kosketa ennen kuin kaava selvitetään.
