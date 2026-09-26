@@ -200,9 +200,9 @@ uv run ralssi.py vsearch --text "climate" --source stea # Tekstihaku → seed �
 | STEA | 26 472 | 26 487 | 99.9% | |
 | RAY | 34 276 | 55 884 | 61.3% | Mukana ristihaussa. Suora `vsearch <id>` RAY:lle vaatii `--source ray` (numero-ID menisi muuten STEA:ksi) |
 | UM | 23 301 | 23 301 | 100% | |
-| EURA | 19 878 | 20 535 | 96.8% | Vanhemmat hankkeet indeksoitu nimellä (ei tiivistelmää) |
-| VA | 8 537 | 9 834 | 86.8% | Valtionavustukset |
-| FTS | 1 850 | 5 091 | 36.3% | EU Financial Transparency System |
+| EURA | 20 535 | 20 535 | 100% | Vanhemmat (2014-2020) hankkeet indeksoitu nimellä (ei tiivistelmää). Päivitetty 26.9.2026 (+657 uutta 2021-2027-hanketta) |
+| VA | 9 834 | 9 834 | 100% | Valtionavustukset. Päivitetty 26.9.2026 (+1 297 uutta, id 8538-9834) |
+| FTS | 1 952 | 5 091 | 38.3% | EU Financial Transparency System, vain kolmas sektori embedataan (ks. `embed_fts.py` THIRD_SECTOR_FILTER). Päivitetty 26.9.2026 (+102 uutta vuodelta 2025, kolmas sektori -suodattimen läpäisseet) |
 | BF | 0 | 58 935 | 0% | Yritys/innovaatiorahoitus, ei sovellu semanttiseen hakuun |
 | Helsinki | 0 | 11 037 | 0% | |
 
@@ -322,6 +322,215 @@ Paras käyttö: `families`-komento (ks. yllä). SQL: `sql "SELECT label, member_
 ### enrichments / eura_enrichments / um_enrichments / va_enrichments / ray_enrichments / fts_enrichments
 GPT-rikastukset: `oneliner, tags, concreteness (1-5), target_group, method`
 Ovat mallin tulkintoja, eivät faktatietoja. Concreteness on subjektiivinen.
+
+- **`eura_enrichments` poikkeaa muista:** sarakkeet ovat vain `hankekoodi, tags, concreteness`
+  (EI oneliner-saraketta). Tagit ovat vapaamuotoisia suomenkielisiä snake_case-sanoja
+  (esim. `"kestava_kehitys"`, `"pk_yritykset"`), ei kiinteää sanastoa kuten VA/FTS:llä.
+  **Kattaa vain 2021-2027-kauden** (8 748/8 748, täysi 26.9.2026 päivityksen jälkeen).
+  2014-2020-kautta (11 787 riviä) ei ole koskaan rikastettu — tunnettu, korjaamaton aukko,
+  ei liity uusien rivien käsittelyyn.
+- **Skriptit:** `scripts/enrich_<lähde>.py` / `scripts/embed_<lähde>.py` (va, eura, fts, ray).
+  Kaikki resume-safe (INSERT OR REPLACE, ohittavat jo tehdyt rivit) ja inkrementaalisia
+  embeddausten osalta (`embed_*.py` liittää vain puuttuvat rivit olemassa olevaan
+  `.npy`/`.json`-pariin, `--full` pakottaa täyden uudelleenlaskennan). API-avain:
+  `scripts/_openai_key.py` lukee `~/.config/ralssi/secrets.env` (`OPENAI_API_KEY`) — EI
+  voice-botin avainta.
+- **EURA-vektorit laskettiin kokonaan uudelleen 26.9.2026.** Toukokuun vektorit eivät
+  vastanneet hankkeiden tekstejä (paras samankaltaisuus ~0,19; haku "nuorten työllistäminen"
+  palautti "Vientipakkausten laadun parantaminen"). Syy jäi selvittämättä, koska alkuperäistä
+  embed-skriptiä ei ollut repossa. Nyt kaikki 20 535 on laskettu `scripts/embed_eura.py --full`
+  -ajolla kaavalla `toteuttaja | viranomainen | nimi | tiivistelma[:300]`.
+- **Sivuston semanttinen haku kaatui EURA-osumiin** (`match_grants` muunsi hankekoodin
+  kokonaisluvuksi). Virhe oli piilossa rikkinäisten vektorien takia ja paljastui vasta kun EURA
+  alkoi osua. Korjattu Supabaseen 26.9.2026, ks. avustusdata `scripts/match-grants-rpc.sql`.
+
+## Verifiointi alkuperäislähteistä
+```bash
+uv run ralssi.py verify "Organisaatio"
+```
+Näyttää nimivariantit, tarkistaa IATI XML-tiedostoista, antaa ohjeet STEA API -verifiointiin.
+
+### Klusterit (STEA-avustusten teemaklusterit)
+```bash
+uv run ralssi.py clusters              # Listaa klusterit (59 kpl)
+uv run ralssi.py clusters --id 133     # Klusterin avustukset
+uv run ralssi.py clusters --id 176 --limit 20
+```
+
+### Samankaltaisuushaku (semanttinen, vaatii numpy)
+```bash
+uv run ralssi.py vsearch 1234                   # STEA grant ID (grants.id)
+uv run ralssi.py vsearch S22173                  # EURA hankekoodi S/A/J-prefiksi (eura_all.hankekoodi)
+uv run ralssi.py vsearch "FI-3-2020-1"          # UM activity_id (um_grants.activity_id)
+uv run ralssi.py vsearch --text "mielenterveys"  # Tekstihaku → paras osuma → vsearch seed
+uv run ralssi.py vsearch 1234 --source eura      # Rajaa tulokset yhteen lähteeseen
+uv run ralssi.py vsearch 1234 --no-dedup         # Näytä kaikki tulokset ilman deduplikointia
+```
+Semanttinen haku GPT-embeddingien avulla. Löytää sisällöltään samankaltaisia avustuksia/hankkeita **yli lähteiden ja kielirajojen** — toimii myös kun käytetään eri sanoja tai kieltä (fi/en/sv).
+
+**Oletuskäyttäytyminen (ilman `--source`):** Näyttää vain ristilähteiset tulokset — seed-hankkeen oma lähde jätetään pois. Esim. jos seed on STEA-avustus, tuloksissa näkyy vain EURA- ja UM-osumia. Käytä `--source X` jos haluat hakea saman lähteen sisällä.
+
+**`--text` -lippu:** Ei vaadi hanke-ID:tä. Tekee ensin tekstihaun, valitsee parhaan osuman seediksi ja ajaa vsearchin sillä. Kätevä kun et tiedä hanke-ID:tä:
+```bash
+uv run ralssi.py vsearch --text "ilmastonmuutos"       # Paras STEA/EURA/UM-osuma → vsearch
+uv run ralssi.py vsearch --text "climate" --source stea # Tekstihaku → seed → rajaa STEA-tuloksiin
+```
+
+**`--no-dedup`:** Oletuksena dedup on päällä: sama organisaatio näkyy tuloksissa vain kerran per lähde (korkein similarity-osuma säilyy). `--no-dedup` näyttää kaikki rivit.
+
+**Embedding-kattavuus:** Tuloksen jälkeen näytetään kattavuustaulukko — kuinka suuri osa kunkin lähteen riveistä on embedding-avaruudessa.
+
+| Lähde | Embeddings | Rivejä | Kattavuus | Huomio |
+|-------|-----------|--------|-----------|--------|
+| STEA | 26 472 | 26 487 | 99.9% | |
+| RAY | 34 276 | 55 884 | 61.3% | Mukana ristihaussa. Suora `vsearch <id>` RAY:lle vaatii `--source ray` (numero-ID menisi muuten STEA:ksi) |
+| UM | 23 301 | 23 301 | 100% | |
+| EURA | 20 535 | 20 535 | 100% | Vanhemmat (2014-2020) hankkeet indeksoitu nimellä (ei tiivistelmää). Päivitetty 26.9.2026 (+657 uutta 2021-2027-hanketta) |
+| VA | 9 834 | 9 834 | 100% | Valtionavustukset. Päivitetty 26.9.2026 (+1 297 uutta, id 8538-9834) |
+| FTS | 1 952 | 5 091 | 38.3% | EU Financial Transparency System, vain kolmas sektori embedataan (ks. `embed_fts.py` THIRD_SECTOR_FILTER). Päivitetty 26.9.2026 (+102 uutta vuodelta 2025, kolmas sektori -suodattimen läpäisseet) |
+| BF | 0 | 58 935 | 0% | Yritys/innovaatiorahoitus, ei sovellu semanttiseen hakuun |
+| Helsinki | 0 | 11 037 | 0% | |
+
+Jos vsearch antaa virheen tunnetulla ID:llä, kyseiselle riville ei ole embeddingiä.
+
+**Hanke-ID:n löytäminen:** `search`-tuloksissa näkyy ID-sarake (STEA grant id, EURA hankekoodi, UM activity_id). `--text`-lippu tekee tämän automaattisesti. Vaihtoehtoisesti SQL:llä:
+```bash
+uv run ralssi.py sql "SELECT id, jarjesto, kayttotarkoitus FROM grants WHERE kayttotarkoitus LIKE '%ilmasto%' LIMIT 5"
+uv run ralssi.py sql "SELECT hankekoodi, nimi FROM eura_all WHERE nimi LIKE '%climate%' LIMIT 5"
+uv run ralssi.py sql "SELECT activity_id, title FROM um_grants WHERE title LIKE '%climate%' LIMIT 5"
+```
+
+**search vs vsearch:**
+- `search` = tarkka sanahaku, löytää vain rivit joissa täsmälleen se sana esiintyy
+- `vsearch` = merkityspohjainen haku yhdestä tunnetusta avustuksesta: löytää samankaltaisia myös synonyymein ja eri kielillä (esim. "nuorisotyö" → "ungdomsarbete", "youth work")
+- Tyypillinen ketju: `search "aihe"` → löydät kiinnostavan hankkeen → `vsearch <hanke-id>` → löydät samankaltaiset joita sanahaku ei olisi löytänyt
+- Tai suoremmin: `vsearch --text "aihe"` → hakee seedin ja samankaltaiset yhdellä komennolla
+
+**Kielirajan ylitys vsearchissa:** Oletuksena (ilman `--source`) vsearch näyttää vain muiden lähteiden tuloksia, joten kielirajan ylitys tapahtuu automaattisesti. Käytä `--source` kohdentamiseen:
+```bash
+uv run ralssi.py vsearch S22173 --source um     # EURA (fi) → etsi vastaavia UM-hankkeita (en)
+uv run ralssi.py vsearch "FI-3-2020-1" --source stea  # UM (en) → etsi vastaavia STEA-avustuksia (fi)
+```
+
+Numpy asentuu automaattisesti `uv run ralssi.py vsearch` -kutsulla (PEP 723 -metadata).
+
+### Vapaa SQL
+```bash
+uv run ralssi.py sql "SELECT jarjesto, SUM(myonnetty) FROM grants GROUP BY jarjesto ORDER BY 2 DESC LIMIT 10"
+uv run ralssi.py sql "SELECT * FROM org_mapping WHERE source_name LIKE '%Keidas%'" --json
+```
+`sql`-komento sallii vain SELECT- ja WITH-kyselyt (suojaa vahingolta). Tulokset rajoitetaan automaattisesti 1000 riviin ellei kyselyssä ole LIMIT-lauseketta (`--limit N` ohittaa oletuksen). `--csv` tulostaa CSV-muodossa. Kirjoitusoperaatioihin käytä `sqlite3` suoraan (ks. alla).
+
+### Datan muokkaus (sqlite3)
+Tietokantaa voi muokata suoraan `sqlite3`-työkalulla kun tutkimus paljastaa korjattavaa:
+```bash
+# Lisää puuttuva org_mapping-rivi (esim. uusi nimi samalle organisaatiolle)
+sqlite3 data/funding.db "INSERT INTO org_mapping (org_id, source, source_name, y_tunnus, confidence) VALUES (4759, 'stea', 'Loisto setlementti ry', '0432210-3', 'high')"
+
+# Korjaa confidence-arvo
+sqlite3 data/funding.db "UPDATE org_mapping SET confidence = 'high' WHERE rowid = 12345"
+
+# Poista väärä linkitys
+sqlite3 data/funding.db "DELETE FROM org_mapping WHERE rowid = 12345"
+
+# Tarkista muutos
+uv run ralssi.py sql "SELECT * FROM org_mapping WHERE org_id = 4759"
+```
+Tee aina varmuuskopio ennen isoja muutoksia: `cp data/funding.db data/funding.db.bak`
+
+### Tilastot ja lähteet
+```bash
+uv run ralssi.py sources              # Lähdetaulukko + kokonaisstatistiikka
+```
+
+### JSON-output (kaikissa komennoissa paitsi verify)
+```bash
+uv run ralssi.py org "Nimi" --json
+uv run ralssi.py hunters --json
+```
+
+### Suora SQL sqlite3-työkalulla
+Jos `sqlite3` on asennettuna, sitä voi käyttää suoraan ilman Pythonia:
+```bash
+sqlite3 data/funding.db "SELECT jarjesto, SUM(myonnetty) FROM grants GROUP BY 1 ORDER BY 2 DESC LIMIT 10"
+sqlite3 -header -column data/funding.db ".schema grants"
+sqlite3 -json data/funding.db "SELECT * FROM org_mapping LIMIT 5"
+```
+
+## Tietokantarakenne
+
+### grants (STEA)
+`id, jarjesto, y_tunnus, vuosi, kayttotarkoitus, avustuslaji, alue, avustuskokonaisuus, jarjestoluokka, haettu, ehdotettu, myonnetty`
+
+### eura_all (EU-rahastot)
+`hankekoodi, ohjelmakausi, rahasto, nimi, toteuttaja, y_tunnus, viranomainen, tila, aloituspvm, paattymispvm, myonnetty_eu_valtio, toteutunut_eu_valtio, tiivistelma, sijainti`
+
+### um_grants (kehitysyhteistyö)
+`id, activity_id, title, description, organisation, year, amount, currency, country, sector`
+
+### bf_awarded (Business Finland)
+`organisation, y_tunnus, year, grants_eur, loans_eur, eu_structural_eur, research_eur, total_eur`
+
+### helsinki_grants (Helsinki)
+`id, hakija, hallintokunta, hakemustyyppi, avustuslaji, vuosi, myonnetty, lahde`
+
+### va_grants (Valtionavustukset)
+`id, organisation, y_tunnus, grantor, year, applied_eur, granted_eur, eu_eur, purpose, call_name, region, case_number, decision_date`
+- grantor: OKM, Suomen Akatemia, TEM, STM, THL, Ulkoministeriö, VNK, OM, YM, OPH (vain yhdistykset/säätiöt)
+- Lähde: haeavustuksia.fi Power BI -export, raakatiedostot `data/okm/`
+
+### fts_grants (EU Financial Transparency System)
+`id, year, programme, organisation, vat_number, y_tunnus, amount, is_ngo, is_nfpo, responsible_department, expense_type, beneficiary_type`
+- Lähde: ec.europa.eu/budget/fts — suorat EU-maksut suomalaisille organisaatioille
+- 5 091 riviä, ~1,75 mrd € (2007–2025)
+
+### org_mapping (ristiin-linkitys)
+`org_id, source, source_name, y_tunnus, confidence, is_category, sector`
+- source: stea, ray, eura, um, bf, helsinki, va, fts
+- confidence: `high` (luotettava, valtaosa), `name` / `name_match` / `suffix_match` (nimipohjainen, riski väärille osumille), `new`
+- sector: company, government, university, research, international, association, foundation, cooperative, church tai NULL (käytetään kolmas-sektori-suodatukseen)
+- is_category: 1 = temaattinen kategoria, ei oikea org (jätetään pois org/hunters-aggregaateista)
+
+### org_families / org_family_members (emojärjestöt = federoidut perheet)
+`org_families` (20 riviä): `id, keyword(slug), label, description, member_count, source_count, total_eur, top_pct, concentration, sample_members, source_url, verified_on` — **valtakunnalliset emojärjestöt** (keskusjärjestö + jäsenyhdistykset), esim. Suomen Punainen Risti, Omaishoitajaliitto, MIELI. EI temaattisia avainsanoja. `concentration` ∈ {`keskitetty`, `hajautunut`}, `top_pct` = suurimman jäsenen osuus liikkeen summasta. Jäsenyydet verifioitu virallisilta jäsenlistoilta (`verified_on`).
+`org_family_members` (279 riviä): `family_id, keyword, y_tunnus` — linkittää jäsenten y-tunnukset perheeseen.
+
+Paras käyttö: `families`-komento (ks. yllä). SQL: `sql "SELECT label, member_count, total_eur, concentration FROM org_families ORDER BY total_eur DESC"`. Koko liikkeen summan saa joinaamalla `org_family_members.y_tunnus` → `org_mapping` → lähde-taulut.
+> Huom: `org_families_cache` (57 riviä) on **vanha** temaattinen avainsana-välimuisti (nuoriso/vammais/…), ei liity emojärjestöihin. Älä sekoita näitä.
+
+### org_public_contracts (HILMA-julkiset hankinnat)
+`id, org_id, y_tunnus, notice_id, buyer, buyer_yt, buyer_org_id, title, value, n_winners, sole_winner, procedure_type, is_suorahankinta, date_published, winner_name, sector` — 73 302 julkista hankintasopimusta joissa oma org on **voittaja (`org_id`) tai ostaja (`buyer_org_id`)**. `org_id` voi olla NULL (voittaja datan ulkopuolelta, kun ostaja on omamme). **Eri rahavirta kuin avustukset** — älä summaa yhteen. `value` luotettava vain kun `sole_winner=1`. Komento: `contracts` (näyttää molemmat roolit), `contracts --buyer <tilaaja>`.
+
+### lobbying_orgs / lobbying_topics / political_connections
+`lobbying_orgs` (1 354): rekisteröidyt lobbarit (`org_name, y_tunnus, sector, contact_count, topic_count, main_industry, total_grants_eur`). `lobbying_topics` (26 376): lobbausaiheet (`y_tunnus, org_name, topic_description, activity_type, activity_date`). `political_connections` (122): puoluekytkökset (`org_id, org_name, y_tunnus, party, connection_count, categories, total_grants_eur`). Komento: `lobbying`.
+
+### enrichments / eura_enrichments / um_enrichments / va_enrichments / ray_enrichments / fts_enrichments
+GPT-rikastukset: `oneliner, tags, concreteness (1-5), target_group, method`
+Ovat mallin tulkintoja, eivät faktatietoja. Concreteness on subjektiivinen.
+
+- **`eura_enrichments` poikkeaa muista:** sarakkeet ovat vain `hankekoodi, tags, concreteness`
+  (EI oneliner-saraketta). Tagit ovat vapaamuotoisia suomenkielisiä snake_case-sanoja
+  (esim. `"kestava_kehitys"`, `"pk_yritykset"`), ei kiinteää sanastoa kuten VA/FTS:llä.
+  **Kattaa vain 2021-2027-kauden** (8 748/8 748, täysi 26.9.2026 päivityksen jälkeen).
+  2014-2020-kautta (11 787 riviä) ei ole koskaan rikastettu — tunnettu, korjaamaton aukko,
+  ei liity uusien rivien käsittelyyn.
+- **Skriptit:** `scripts/enrich_<lähde>.py` / `scripts/embed_<lähde>.py` (va, eura, fts, ray).
+  Kaikki resume-safe (INSERT OR REPLACE, ohittavat jo tehdyt rivit) ja inkrementaalisia
+  embeddausten osalta (`embed_*.py` liittää vain puuttuvat rivit olemassa olevaan
+  `.npy`/`.json`-pariin, `--full` pakottaa täyden uudelleenlaskennan). API-avain:
+  `scripts/_openai_key.py` lukee `~/.config/ralssi/secrets.env` (`OPENAI_API_KEY`) — EI
+  voice-botin avainta.
+- **26.9.2026 löydös:** `data/eura_embeddings.npy`:n vanhat (esi-26.9.) vektorit eivät
+  vertailussa vastanneet mitenkään hyvin (~cosine 0.03-0.16 parhaimmillaankin) niiden
+  hankekoodien nykyistä `nimi`/`tiivistelma`-sisältöä joita testattiin (esim. A80001,
+  A80002) — VA:lla vastaava testi antoi cosine ~0.9999999. Syytä ei selvitetty (mahd.
+  vanha id/tekstijärjestyksen kohdistusvirhe embed-skriptissä, jota ei ole enää repossa).
+  Uudet 26.9. lisätyt EURA-embeddingit rakennettu `NEW_SOURCE_GUIDE.md`:n dokumentoidulla
+  kaavalla (`toteuttaja | viranomainen | nimi | tiivistelma[:300]`) eikä tätä vanhaa
+  (mahdollisesti viallista) dataa ole korjattu — vain uusia rivejä lisätty. Jos EURA-vsearch
+  vaikuttaa antavan huonoja tuloksia vanhoille (esi-26.9.) hankkeille, tämä on syy — vaatisi
+  koko `eura_embeddings.npy`:n uudelleenlaskennan (`--full`) tutkittavaksi ja kustannus-
+  arvioitavaksi ennen ajoa.
 
 ## Verifiointi
 

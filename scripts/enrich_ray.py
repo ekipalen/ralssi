@@ -18,20 +18,13 @@ import time
 
 from openai import OpenAI
 
+from _openai_key import load_api_key
+
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(SCRIPT_DIR)
 DB_PATH = os.path.join(ROOT, "data", "funding.db")
-SECRETS_PATH = os.path.expanduser("~/.config/voice-bot/secrets.env")
 WHERE = "myonnetty > 0"
 BATCH_SIZE = int(os.getenv("ENRICH_BATCH_SIZE", "20"))
-
-
-def load_api_key():
-    with open(SECRETS_PATH) as f:
-        for line in f:
-            if line.startswith("OPENAI_REALTIME_KEY="):
-                return line.split("=", 1)[1].strip()
-    raise RuntimeError("OPENAI_REALTIME_KEY not found")
 
 
 SYSTEM_PROMPT = """\

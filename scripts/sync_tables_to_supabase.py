@@ -39,6 +39,8 @@ TABLES = {
     "grants": ("stea_grants", "myonnetty"),
     "helsinki_grants": ("helsinki_grants", "myonnetty"),
     "um_grants": ("um_grants", "amount"),
+    "va_enrichments": ("va_enrichments", None),
+    "eura_enrichments": ("eura_enrichments", None),
     "org_family_members": ("org_family_members", None),
     "org_families": ("org_families", None),
 }

@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Generate 384-dim embeddings for fts_grants (third-sector only) using OpenAI text-embedding-3-small."""
+"""Generate 384-dim embeddings for fts_grants (third-sector only) using OpenAI text-embedding-3-small.
+
+Incremental by default: rows already present in fts_embedding_ids.json are
+skipped, new ones are appended to the existing .npy/.json (order preserved,
+old vectors untouched). Pass --full to recompute everything from scratch."""
 
 import json
 import os
@@ -10,13 +14,14 @@ import time
 import numpy as np
 from openai import OpenAI
 
+from _openai_key import load_api_key
+
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(SCRIPT_DIR)
 DB_PATH = os.path.join(ROOT, "data", "funding.db")
 OUT_NPY = os.path.join(ROOT, "data", "fts_embeddings.npy")
 OUT_IDS = os.path.join(ROOT, "data", "fts_embedding_ids.json")
 
-SECRETS_PATH = os.path.expanduser("~/.config/voice-bot/secrets.env")
 BATCH_SIZE = 500
 DIMENSIONS = 384
 
@@ -42,14 +47,6 @@ THIRD_SECTOR_FILTER = """
 """
 
 
-def load_api_key():
-    with open(SECRETS_PATH) as f:
-        for line in f:
-            if line.startswith("OPENAI_REALTIME_KEY="):
-                return line.split("=", 1)[1].strip()
-    raise RuntimeError("OPENAI_REALTIME_KEY not found")
-
-
 def build_text(row):
     """Build embedding text: organisation | programme | (no subject in this dataset)"""
     parts = [row["organisation"], row["programme"]]
@@ -68,11 +65,31 @@ def main():
     ).fetchall()]
     conn.close()
 
-    total = len(grants)
-    print(f"Generating embeddings for {total} third-sector grants...")
+    full = "--full" in sys.argv
+    existing_ids = []
+    existing_arr = None
+    if not full and os.path.exists(OUT_IDS) and os.path.exists(OUT_NPY):
+        with open(OUT_IDS) as f:
+            existing_ids = json.load(f)
+        existing_arr = np.load(OUT_NPY)
+        print(f"Found {len(existing_ids)} existing embeddings, appending only missing rows (--full to regenerate all).")
 
-    ids = [g["id"] for g in grants]
-    texts = [build_text(g) for g in grants]
+    existing_set = set(existing_ids)
+    todo = [g for g in grants if g["id"] not in existing_set]
+
+
+    if "--limit" in sys.argv:
+        limit = int(sys.argv[sys.argv.index("--limit") + 1])
+        todo = todo[:limit]
+
+    total = len(todo)
+    print(f"Generating embeddings for {total} third-sector grants...")
+    if total == 0:
+        print("Nothing to do.")
+        return
+
+    ids = [g["id"] for g in todo]
+    texts = [build_text(g) for g in todo]
     all_embeddings = []
 
     for i in range(0, total, BATCH_SIZE):
@@ -98,12 +115,18 @@ def main():
         done = min(i + BATCH_SIZE, total)
         print(f"  {done}/{total}")
 
-    arr = np.array(all_embeddings, dtype=np.float32)
+    new_arr = np.array(all_embeddings, dtype=np.float32)
+    if existing_arr is not None:
+        arr = np.concatenate([existing_arr, new_arr], axis=0)
+        ids = existing_ids + ids
+    else:
+        arr = new_arr
+
     np.save(OUT_NPY, arr)
     with open(OUT_IDS, "w") as f:
         json.dump(ids, f)
 
-    print(f"\nDone. Shape: {arr.shape}")
+    print(f"\nDone. Shape: {arr.shape} ({len(new_arr)} new)")
     print(f"  {OUT_NPY}")
     print(f"  {OUT_IDS}")
 

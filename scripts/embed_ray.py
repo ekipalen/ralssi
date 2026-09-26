@@ -11,27 +11,20 @@ import time
 import numpy as np
 from openai import OpenAI
 
+from _openai_key import load_api_key
+
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(SCRIPT_DIR)
 DB_PATH = os.path.join(ROOT, "data", "funding.db")
 OUT_NPY = os.path.join(ROOT, "data", "ray_embeddings.npy")
 OUT_IDS = os.path.join(ROOT, "data", "ray_embedding_ids.json")
 
-SECRETS_PATH = os.path.expanduser("~/.config/voice-bot/secrets.env")
 BATCH_SIZE = 500
 DIMENSIONS = 384
 
 # Only granted rows: rejected/undecided applications (myonnetty=0) are not
 # meaningful for "find similar grants" and would add 0 € noise to results.
 WHERE = "myonnetty > 0"
-
-
-def load_api_key():
-    with open(SECRETS_PATH) as f:
-        for line in f:
-            if line.startswith("OPENAI_REALTIME_KEY="):
-                return line.split("=", 1)[1].strip()
-    raise RuntimeError("OPENAI_REALTIME_KEY not found")
 
 
 def build_text(row):

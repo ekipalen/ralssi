@@ -78,7 +78,7 @@ WHERE om.y_tunnus IN (SELECT DISTINCT y_tunnus FROM <nimi>_grants)
 Luo `scripts/embed_<nimi>.py`. Käyttää OpenAI API:a.
 
 ```python
-# Avain: ~/.config/voice-bot/secrets.env -> OPENAI_REALTIME_KEY
+# Avain: from _openai_key import load_api_key (lukee ~/.config/ralssi/secrets.env -> OPENAI_API_KEY)
 # Malli: text-embedding-3-small
 # Dimensiot: 384 (sama kuin muilla lähteillä)
 # Batch: 500 kerrallaan

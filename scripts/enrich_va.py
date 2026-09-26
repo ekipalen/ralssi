@@ -9,19 +9,11 @@ import time
 
 from openai import OpenAI
 
+from _openai_key import load_api_key
+
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(SCRIPT_DIR)
 DB_PATH = os.path.join(ROOT, "data", "funding.db")
-
-SECRETS_PATH = os.path.expanduser("~/.config/voice-bot/secrets.env")
-
-def load_api_key():
-    with open(SECRETS_PATH) as f:
-        for line in f:
-            if line.startswith("OPENAI_REALTIME_KEY="):
-                return line.split("=", 1)[1].strip()
-    raise RuntimeError("OPENAI_REALTIME_KEY not found")
-
 
 SYSTEM_PROMPT = """\
 You enrich Finnish public funding grant records. For each grant, produce:
@@ -56,9 +48,8 @@ def main():
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
 
-    cur.execute("DROP TABLE IF EXISTS va_enrichments")
     cur.execute("""
-        CREATE TABLE va_enrichments (
+        CREATE TABLE IF NOT EXISTS va_enrichments (
             grant_id INTEGER PRIMARY KEY,
             oneliner TEXT,
             tags TEXT,
@@ -67,9 +58,18 @@ def main():
     """)
     conn.commit()
 
+    already_done = {r[0] for r in cur.execute("SELECT grant_id FROM va_enrichments")}
+    print(f"Resuming: {len(already_done)} already enriched")
+
     grants = [dict(r) for r in conn.execute(
-        "SELECT id, organisation, grantor, granted_eur, purpose FROM va_grants"
+        "SELECT id, organisation, grantor, granted_eur, purpose FROM va_grants ORDER BY id"
     ).fetchall()]
+    grants = [g for g in grants if g["id"] not in already_done]
+
+    limit = None
+    if "--limit" in sys.argv:
+        limit = int(sys.argv[sys.argv.index("--limit") + 1])
+        grants = grants[:limit]
 
     total = len(grants)
     done = 0
@@ -95,7 +95,9 @@ def main():
                 text = resp.choices[0].message.content.strip()
                 if text.startswith("```"):
                     text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
-                results = json.loads(text)
+                parsed = json.loads(text)
+                results = parsed if isinstance(parsed, list) else next(
+                    (v for v in parsed.values() if isinstance(v, list)), [])
                 break
             except Exception as e:
                 if attempt == 2:

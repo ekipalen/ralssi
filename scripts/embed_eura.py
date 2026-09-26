@@ -1,9 +1,22 @@
 #!/usr/bin/env python3
-"""Generate 384-dim embeddings for va_grants using OpenAI text-embedding-3-small.
+"""Generate 384-dim embeddings for eura_all using OpenAI text-embedding-3-small.
+Mirrors embed_va.py; EURA = EU structural fund projects (hankekoodi is the PK,
+a text id, not an int).
 
-Incremental by default: rows already present in va_embedding_ids.json are
+Text template follows the project convention documented in NEW_SOURCE_GUIDE.md
+("org | grantor | purpose[:300] | call_name[:100]", adapted to EURA's fields):
+toteuttaja (implementer) | viranomainen (funding authority) | nimi (title) |
+tiivistelma[:300] (abstract). Older 2014-2020 projects have no tiivistelma, so
+they fall back to toteuttaja | viranomainen | nimi only (see AGENTS.md coverage
+note: "vanhemmat hankkeet indeksoitu nimella").
+
+Incremental by default: rows already present in eura_embedding_ids.json are
 skipped, new ones are appended to the existing .npy/.json (order preserved,
-old vectors untouched). Pass --full to recompute everything from scratch."""
+old vectors untouched). Pass --full to recompute everything from scratch
+(Kaikki EURA-vektorit laskettiin uudelleen --full-ajolla 26.9.2026: vanhat
+toukokuun vektorit eivät vastanneet hankkeiden tekstejä lainkaan, ja semanttinen haku
+antoi EURA:sta satunnaisia tuloksia. Kustannus koko kannalle noin 0,05 USD.)
+"""
 
 import json
 import os
@@ -19,19 +32,17 @@ from _openai_key import load_api_key
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(SCRIPT_DIR)
 DB_PATH = os.path.join(ROOT, "data", "funding.db")
-OUT_NPY = os.path.join(ROOT, "data", "va_embeddings.npy")
-OUT_IDS = os.path.join(ROOT, "data", "va_embedding_ids.json")
+OUT_NPY = os.path.join(ROOT, "data", "eura_embeddings.npy")
+OUT_IDS = os.path.join(ROOT, "data", "eura_embedding_ids.json")
 
 BATCH_SIZE = 500
 DIMENSIONS = 384
 
 
 def build_text(row):
-    parts = [row["organisation"], row["grantor"]]
-    if row["purpose"]:
-        parts.append(row["purpose"][:300])
-    if row["call_name"]:
-        parts.append(row["call_name"][:100])
+    parts = [row["toteuttaja"], row["viranomainen"], row["nimi"]]
+    if row["tiivistelma"]:
+        parts.append(row["tiivistelma"][:300])
     return " | ".join(p for p in parts if p)
 
 
@@ -43,7 +54,8 @@ def main():
     conn.row_factory = sqlite3.Row
 
     grants = [dict(r) for r in conn.execute(
-        "SELECT id, organisation, grantor, purpose, call_name FROM va_grants ORDER BY id"
+        "SELECT hankekoodi, toteuttaja, viranomainen, nimi, tiivistelma "
+        "FROM eura_all ORDER BY hankekoodi"
     ).fetchall()]
     conn.close()
 
@@ -57,7 +69,7 @@ def main():
         print(f"Found {len(existing_ids)} existing embeddings, appending only missing rows (--full to regenerate all).")
 
     existing_set = set(existing_ids)
-    todo = [g for g in grants if g["id"] not in existing_set]
+    todo = [g for g in grants if g["hankekoodi"] not in existing_set]
 
 
     if "--limit" in sys.argv:
@@ -65,12 +77,12 @@ def main():
         todo = todo[:limit]
 
     total = len(todo)
-    print(f"Generating embeddings for {total} grants...")
+    print(f"Generating embeddings for {total} projects...")
     if total == 0:
         print("Nothing to do.")
         return
 
-    ids = [g["id"] for g in todo]
+    ids = [g["hankekoodi"] for g in todo]
     texts = [build_text(g) for g in todo]
     all_embeddings = []
 
@@ -95,8 +107,7 @@ def main():
                     time.sleep(2 ** attempt)
 
         done = min(i + BATCH_SIZE, total)
-        if done % 2000 == 0 or done >= total:
-            print(f"  {done}/{total}")
+        print(f"  {done}/{total}")
 
     new_arr = np.array(all_embeddings, dtype=np.float32)
     if existing_arr is not None:

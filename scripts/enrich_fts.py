@@ -9,11 +9,11 @@ import time
 
 from openai import OpenAI
 
+from _openai_key import load_api_key
+
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(SCRIPT_DIR)
 DB_PATH = os.path.join(ROOT, "data", "funding.db")
-
-SECRETS_PATH = os.path.expanduser("~/.config/voice-bot/secrets.env")
 
 THIRD_SECTOR_FILTER = """
     (
@@ -35,14 +35,6 @@ THIRD_SECTOR_FILTER = """
     AND organisation NOT LIKE '%BUSINESS FINLAND%'
     AND organisation NOT LIKE '%CSC-TIETEEN%'
 """
-
-
-def load_api_key():
-    with open(SECRETS_PATH) as f:
-        for line in f:
-            if line.startswith("OPENAI_REALTIME_KEY="):
-                return line.split("=", 1)[1].strip()
-    raise RuntimeError("OPENAI_REALTIME_KEY not found")
 
 
 SYSTEM_PROMPT = """\
@@ -104,6 +96,19 @@ def main():
 
     # Filter out already done
     grants = [g for g in grants if g["id"] not in already_done]
+
+    # Optional scope restriction, e.g. --year 2025 to enrich only a specific
+    # import batch without also sweeping up unrelated pre-existing gaps
+    # (there is a known one: id=737, year=2013, never enriched, out of scope
+    # for incremental "new rows" runs).
+    if "--year" in sys.argv:
+        year = int(sys.argv[sys.argv.index("--year") + 1])
+        grants = [g for g in grants if g["year"] == year]
+
+    limit = None
+    if "--limit" in sys.argv:
+        limit = int(sys.argv[sys.argv.index("--limit") + 1])
+        grants = grants[:limit]
 
     total = len(grants)
     done = 0
