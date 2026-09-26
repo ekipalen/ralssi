@@ -1,6 +1,6 @@
 # Rälssi — julkisen rahoituksen tutkimustyökalu
 
-Tietokanta suomalaisesta julkisesta rahoituksesta. 8 datalähdettä, ~209 000 riviä, yhteensä ~49 mrd € (päivitetty 25.9.2026). Tarkoitettu tutkivaan analyysiin: ketkä saavat rahaa, mistä lähteistä, ja kuinka paljon?
+Tietokanta suomalaisesta julkisesta rahoituksesta. 8 datalähdettä, ~211 000 riviä, yhteensä ~49 mrd € (päivitetty 26.9.2026). Tarkoitettu tutkivaan analyysiin: ketkä saavat rahaa, mistä lähteistä, ja kuinka paljon?
 
 > **Suositus agenteille:** Käytä oletuksena `--third-sector`-lippua (oletus: päällä). Kolmanteen sektoriin rajattuna data on usein kiinnostavampaa ja datamäärä hallittavampaa. Poista suodatus `--no-third-sector`-lipulla vain kun käyttäjä nimenomaisesti pyytää yliopisto-, yritys- tai viranomaisdata.
 
@@ -61,11 +61,11 @@ uv run ralssi.py verify "Kansanvalistusseura"  # 6. Varmista alkuperäislähteis
 |-------|-------|--------|--------|
 | STEA | `grants` | 26 487 | Järjestöavustukset 2017– (sis. hylätyt, myonnetty=0) |
 | RAY | `ray_grants` | 55 884 | Raha-automaattiyhdistys 2000–2016 (STEA:n edeltäjä) |
-| EURA | `eura_all` | 19 878 | EU-rakennerahastohankkeet 2014-2029 |
+| EURA | `eura_all` | 20 535 | EU-rakennerahastohankkeet 2014-2029 |
 | Business Finland | `bf_awarded` | 58 935 | Yritys- ja tutkimusrahoitus |
 | UM/IATI | `um_grants` | 23 301 | Kehitysyhteistyö (ulkoministeriö) |
 | Helsinki | `helsinki_grants` | 11 037 | Kaupungin avustukset |
-| VA | `va_grants` | 8 537 | Valtionavustukset (haeavustuksia.fi): OKM, Akatemia, TEM, STM, THL, UM, VNK, OM, YM, OPH |
+| VA | `va_grants` | 9 834 | Valtionavustukset (haeavustuksia.fi): OKM, Akatemia, TEM, STM, THL, UM, VNK, OM, YM, OPH |
 | FTS | `fts_grants` | 5 091 | EU Financial Transparency System (suorat EU-maksut) |
 
 Organisaatiot linkitetty ristiin `org_mapping`-taululla (~59 100 riviä, ~6 670 orgia 2+ lähteessä, ~49 700 erillistä org_id:tä). Linkitys perustuu y-tunnukseen (luotettava) tai nimeen (riski väärille osumille).
@@ -200,8 +200,8 @@ uv run ralssi.py vsearch --text "climate" --source stea # Tekstihaku → seed �
 | STEA | 26 472 | 26 487 | 99.9% | |
 | RAY | 34 276 | 55 884 | 61.3% | Mukana ristihaussa. Suora `vsearch <id>` RAY:lle vaatii `--source ray` (numero-ID menisi muuten STEA:ksi) |
 | UM | 23 301 | 23 301 | 100% | |
-| EURA | 19 878 | 19 878 | 100% | Vanhemmat hankkeet indeksoitu nimellä (ei tiivistelmää) |
-| VA | 8 537 | 8 537 | 100% | Valtionavustukset |
+| EURA | 19 878 | 20 535 | 96.8% | Vanhemmat hankkeet indeksoitu nimellä (ei tiivistelmää) |
+| VA | 8 537 | 9 834 | 86.8% | Valtionavustukset |
 | FTS | 1 850 | 5 091 | 36.3% | EU Financial Transparency System |
 | BF | 0 | 58 935 | 0% | Yritys/innovaatiorahoitus, ei sovellu semanttiseen hakuun |
 | Helsinki | 0 | 11 037 | 0% | |

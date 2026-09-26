@@ -112,16 +112,26 @@ def main():
             cur.execute("""select column_name from information_schema.columns
                            where table_schema='public' and table_name=%s and data_type='boolean'""", (pt,))
             bool_cols = {r[0] for r in cur.fetchall()}
+            # SQLite sallii tyhjän merkkijonon numerosarakkeessa, Postgres ei (26.9.2026:
+            # EURA-tuonti kirjoitti puuttuvan summan ''-arvona NULLin sijaan).
+            cur.execute("""select column_name from information_schema.columns
+                           where table_schema='public' and table_name=%s
+                           and data_type in ('double precision','real','numeric','integer','bigint')""", (pt,))
+            num_cols = {r[0] for r in cur.fetchall()}
             offset = 1 if use_rowid else 0
             bool_idx = [i + offset for i, c in enumerate(cols) if c in bool_cols]
+            num_idx = [i + offset for i, c in enumerate(cols) if c in num_cols]
 
             def fix(row):
-                if not bool_idx:
+                if not bool_idx and not num_idx:
                     return row
                 row = list(row)
                 for i in bool_idx:
                     if row[i] is not None:
                         row[i] = bool(row[i])
+                for i in num_idx:
+                    if row[i] == "":
+                        row[i] = None
                 return row
 
             collist = ",".join(f'"{c}"' for c in cols)

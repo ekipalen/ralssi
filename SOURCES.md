@@ -25,7 +25,7 @@
 ## EURA (EU-rakennerahastot)
 
 - **Raakadata:** `data/eura_raw.xlsx`
-- **Tietokantataulu:** `eura_all` (19 878 riviä), `eura_enrichments` (GPT-rikastus)
+- **Tietokantataulu:** `eura_all` (20 535 riviä; 2021–2027 päivitetty 9/2026, 2014–2020 5/2026), `eura_enrichments` (GPT-rikastus)
 - **Verifiointi:** Ei suoraa API:a. Web-UI on SPA:
   - EURA 2014-2020: `https://www.eura2014.fi/rrtiepa/projekti.php?projektikoodi={hankekoodi}`
   - EURA 2021-2027: `https://www.eura2021.fi/hakutulokset/projektikortti?id={hankekoodi}`
@@ -66,7 +66,7 @@
 ## Valtionavustukset (haeavustuksia.fi)
 
 - **Raakadata:** `data/okm/Myönteiset päätökset.xlsx` (alkuperäinen Power BI -export, 144 993 riviä)
-- **Tietokantataulu:** `va_grants` (8 537 riviä, 3,68 mrd €), `va_enrichments` (GPT-rikastus)
+- **Tietokantataulu:** `va_grants` (9 834 riviä, 4,08 mrd €, päätökset 9/2026 asti), `va_enrichments` (GPT-rikastus)
 - **Lähde:** https://haeavustuksia.fi (ent. tutkiavustuksia.fi) — OKM:n Power BI -julkaisu
 - **Verifiointi:** Vertaa raaka-xlsx-tiedostoon tai hae suoraan haeavustuksia.fi-palvelusta
 - **Suodatus alkuperäisdatasta:**
@@ -88,7 +88,7 @@
 
 ## org_mapping (ristiin-linkitys)
 
-- **Tietokantataulu:** `org_mapping` (59 146 riviä, ~49 686 eri org_id:tä)
+- **Tietokantataulu:** `org_mapping` (59 417 riviä, ~49 818 eri org_id:tä)
 - **Sarakkeet:** org_id, source, source_name, y_tunnus, confidence, is_category, sector
 - **Linkityksen luottamustasot (`confidence`):**
   - `high` — alkuperäinen lähde / luotettava (y-tunnus-osuma)
@@ -149,7 +149,7 @@ grep -A10 "Organisaation nimi" data/iati/Finland_total_2020.xml
 ## Päivitysajo 25.9.2026 — mitä opittiin
 
 Päivitetty: FTS (+2025), Business Finland (+2026), HILMA (6–9/2026), avoimuusrekisteri.
-Tarkistettu, ei uutta: STEA, UM/IATI, Helsinki. **Ei saatu:** VA ja EURA 2021–2027.
+Tarkistettu, ei uutta: STEA, UM/IATI, Helsinki. VA ja EURA 2021–2027 tuotiin 26.9.2026 käsin viedyistä Exceleistä (v2.6).
 Raportit ja hakuskriptit: `data/staging/<lähde>/REPORT.md` (gitignoressa — HILMA-skriptissä
 on rajapinta-avain).
 
@@ -177,3 +177,17 @@ on rajapinta-avain).
 - **`lobbying_orgs.total_grants_eur`:n alkuperäistä laskentakaavaa ei ole toistettavissa**
   (`fix-lobbying-grants.py` antaa tutkimusraskaille orgeille selvästi pienempiä summia). Siksi
   vain uusien orgien summat laskettiin; vanhoja ei kosketa ennen kuin kaava selvitetään.
+
+### VA ja EURA 26.9.2026 — käsin viety Excel
+
+- **Power BI -vienti katkeaa 150 000 riviin hiljaa** — tiedoston loppuun tulee rivi
+  "Exported data exceeded the allowed volume". VA-kokoaineisto on jo yli rajan. Vienti on
+  laskevassa päivämääräjärjestyksessä, joten katkaisu leikkaa *vanhimmat* päätökset. **Älä aja
+  `import_va.py`:tä katkaistulle viennille** (se tekee DROP TABLE ja hävittäisi vanhat) —
+  tuo inkrementaalisesti ja vertaa vain päällekkäiseltä aikaväliltä. Malli:
+  `data/staging/import2/`.
+- **VA-lähde täydentää päätöksiä jälkikäteen.** Kesäkuun viennissä Suomen Akatemian
+  kesäkuun päätöksiä oli 0, syyskuun viennissä 463; OPH:n toukokuun 0 → 647. Tuoreimmat
+  kuukaudet ovat aina vajaita — vertaile siksi aina päällekkäinen väli, älä vain uusinta jaksoa.
+- **EURA-viennin puuttuva summa tuli tyhjänä merkkijonona**, vanhoissa riveissä se on NULL.
+  Postgres hylkää '' numerosarakkeessa → synkkaskripti muuntaa nyt ''→NULL.
