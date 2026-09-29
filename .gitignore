@@ -21,3 +21,5 @@ data/staging/
 data/funding.db.*
 data/*.db-wal
 data/*.db-shm
+
+data/*.bak*
